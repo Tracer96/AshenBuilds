@@ -1,12 +1,56 @@
 local AB=AshenBuilds
 local qualityColors={[0]={0.62,0.62,0.62},[1]={1,1,1},[2]={0.12,1,0},[3]={0,0.44,0.87},[4]={0.64,0.21,0.93},[5]={1,0.5,0}}
-local function MakeButton(parent,text,width,height) local b=CreateFrame("Button",nil,parent,"UIPanelButtonTemplate"); b:SetWidth(width or 90); b:SetHeight(height or 22); b:SetText(text); return b end
+local function MakeButton(parent,text,width,height) local b=CreateFrame("Button",nil,parent,"UIPanelButtonTemplate"); b:SetWidth(width or 90); b:SetHeight(height or 22); b:SetText(text); AB:SkinButton(b,"ember"); return b end
 local function MakeBackdrop(frame) frame:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border",tile=true,tileSize=32,edgeSize=24,insets={left=8,right=8,top=8,bottom=8}}) end
+-- WoW's screen is only 768 units tall at UI scale 1.0, so the larger windows
+-- shrink to fit on open and stay clamped on-screen while dragged.
+function AB:FitToScreen(frame)
+  local s=math.min(1,(UIParent:GetWidth()*0.96)/frame:GetWidth(),(UIParent:GetHeight()*0.94)/frame:GetHeight())
+  frame:SetScale(s)
+end
+
+-- Clears keyboard focus from every EditBox inside a window. Not cached: windows
+-- are hidden (firing OnHide) before their children are built.
+local function ClearWindowFocus(frame)
+  local kids={frame:GetChildren()}; local i
+  for i=1,table.getn(kids) do if kids[i]:GetObjectType()=="EditBox" then kids[i]:ClearFocus() end; ClearWindowFocus(kids[i]) end
+end
+
+-- Brings a window in front of the other AshenBuilds windows and takes keyboard
+-- focus away from text boxes in the windows behind it, so typing never lands
+-- in a window you are no longer looking at.
+function AB:FocusWindow(frame)
+  if frame.Raise then frame:Raise() end
+  local i,w
+  for i=1,table.getn(self.windows) do w=self.windows[i]; if w~=frame then ClearWindowFocus(w) end end
+end
+
+-- Shared window behaviour:
+--  * all windows share one strata so raising can put any of them in front
+--    (toplevel also raises a window when anything inside it is clicked);
+--  * draggable by any empty area and clamped on-screen;
+--  * swallows the mouse wheel so scrolling never zooms the camera (scroll
+--    frames inside still get the wheel first because they enable it themselves);
+--  * registered with UISpecialFrames so Escape closes it.
+-- opts.fit shrinks the window to fit the screen on open; opts.wheel handles scrolling.
+function AB:SetupWindow(frame,opts)
+  opts=opts or {}; self.windows=self.windows or {}; table.insert(self.windows,frame)
+  frame:SetFrameStrata("DIALOG"); if frame.SetToplevel then frame:SetToplevel(true) end
+  frame:EnableMouse(true); frame:SetMovable(true); frame:RegisterForDrag("LeftButton")
+  if frame.SetClampedToScreen then frame:SetClampedToScreen(true) end
+  frame:SetScript("OnMouseDown",function() AB:FocusWindow(this) end)
+  frame:SetScript("OnDragStart",function() AB:FocusWindow(this); this:StartMoving() end)
+  frame:SetScript("OnDragStop",function() this:StopMovingOrSizing() end)
+  frame:SetScript("OnShow",function() if opts.fit then AB:FitToScreen(this) end; AB:FocusWindow(this) end)
+  frame:SetScript("OnHide",function() ClearWindowFocus(this) end)
+  frame:EnableMouseWheel(true); frame:SetScript("OnMouseWheel",opts.wheel or function() end)
+  tinsert(UISpecialFrames,frame:GetName())
+end
 local function Cycle(list,current,delta) local i=AB.IndexOf(list,current)+delta; if i<1 then i=table.getn(list) elseif i>table.getn(list) then i=1 end; return list[i] end
 local function F(n) if not n then return "0" end if math.floor(n)==n then return tostring(n) end return string.format("%.2f",n) end
 local function Section(parent,title,y)
   local t=parent:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); t:SetPoint("TOPLEFT",parent,"TOPLEFT",12,y); t:SetText(title); t:SetTextColor(1,.82,0)
-  local line=parent:CreateTexture(nil,"ARTWORK"); line:SetTexture(1,1,1,.12); line:SetPoint("TOPLEFT",parent,"TOPLEFT",10,y-13); line:SetWidth(190); line:SetHeight(1)
+  local line=parent:CreateTexture(nil,"ARTWORK"); local d=AB.THEME.divider; line:SetTexture(d[1],d[2],d[3],d[4]); line:SetPoint("TOPLEFT",parent,"TOPLEFT",10,y-13); line:SetWidth(190); line:SetHeight(1)
 end
 local function StatLine(parent,left,right,y,color)
   local a=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); a:SetPoint("TOPLEFT",parent,"TOPLEFT",14,y); a:SetText(left); a:SetTextColor(.72,.78,.88)
@@ -16,7 +60,7 @@ end
 
 function AB:CreateGearSlot(parent,slot,x,y,side)
   local b=CreateFrame("Button",nil,parent); b:SetWidth(155); b:SetHeight(54); b:SetPoint("TOPLEFT",parent,"TOPLEFT",x,y); b.slot=slot
-  b:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=12,edgeSize=10,insets={left=3,right=3,top=3,bottom=3}}); b:SetBackdropColor(.05,.07,.11,.95); b:SetBackdropBorderColor(.25,.32,.44,1)
+  AB:StylePanel(b,"slot")
   b.icon=b:CreateTexture(nil,"ARTWORK"); b.icon:SetWidth(42); b.icon:SetHeight(42); b.icon:SetPoint(side=="right" and "RIGHT" or "LEFT",b,side=="right" and "RIGHT" or "LEFT",side=="right" and -5 or 5,0)
   b.label=b:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); b.label:SetPoint("TOP",b,"TOP",side=="right" and -25 or 25,-6); b.label:SetText(self.SLOT_LABELS[slot]); b.label:SetTextColor(.72,.68,1)
   b.itemText=b:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); b.itemText:SetPoint("TOP",b.label,"BOTTOM",0,-3); b.itemText:SetWidth(102); b.itemText:SetJustifyH("CENTER")
@@ -28,8 +72,9 @@ end
 
 function AB:CreateUI()
   if self.frame then return end
-  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(980); f:SetHeight(900); f:SetPoint("CENTER",UIParent,"CENTER",0,0); f:SetFrameStrata("DIALOG"); f:EnableMouse(true); f:SetMovable(true); f:RegisterForDrag("LeftButton"); f:SetScript("OnDragStart",function() this:StartMoving() end); f:SetScript("OnDragStop",function() this:StopMovingOrSizing() end); MakeBackdrop(f); f:Hide(); self.frame=f
-  local bg=f:CreateTexture(nil,"BACKGROUND"); bg:SetTexture(0.035,.055,.09,.97); bg:SetPoint("TOPLEFT",f,"TOPLEFT",10,-10); bg:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-10,10)
+  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(980); f:SetHeight(900); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.frame=f
+  -- Focus keeps the Ashen sigil centred behind the title, cropping rather than stretching the art.
+  self:ApplyEmberBackground(f,10,0.33,0.45,0.30); self:AddEmberHeader(f,116); self:AddEmberFloor(f,44)
   local title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); title:SetPoint("TOP",f,"TOP",0,-16); title:SetText("ASHEN BUILDS  |cff8d96a8v"..self.VERSION.."|r"); title:SetTextColor(1,.45,.16)
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
 
@@ -42,7 +87,7 @@ function AB:CreateUI()
 
   local function Profile(label,x,w,listFn,getFn,setFn)
     local fs=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); fs:SetPoint("TOPLEFT",f,"TOPLEFT",x,-82); fs:SetText(label)
-    local b=MakeButton(f,"",w,22); b:SetPoint("TOPLEFT",f,"TOPLEFT",x,-98); b:RegisterForClicks("LeftButtonUp","RightButtonUp"); b:SetScript("OnClick",function() setFn(Cycle(listFn(),getFn(),arg1=="RightButton" and -1 or 1)) end); return b
+    local b=MakeButton(f,"",w,22); AB:SkinButton(b,"cycle"); b:SetPoint("TOPLEFT",f,"TOPLEFT",x,-98); b:RegisterForClicks("LeftButtonUp","RightButtonUp"); b:SetScript("OnClick",function() setFn(Cycle(listFn(),getFn(),arg1=="RightButton" and -1 or 1)) end); return b
   end
   self.classButton=Profile("CLASS",24,105,function() return AB.CLASSES end,function() return AB.current.class end,function(v) AB:SetClass(v) end)
   self.raceButton=Profile("RACE",136,105,function() return AB.RACES end,function() return AB.current.race end,function(v) AB:SetRace(v) end)
@@ -57,20 +102,20 @@ function AB:CreateUI()
   for i=1,table.getn(leftSlots) do self:CreateGearSlot(f,leftSlots[i],50,-140-(i-1)*58,"left") end
   for i=1,table.getn(rightSlots) do self:CreateGearSlot(f,rightSlots[i],775,-140-(i-1)*58,"right") end
 
-  local stats=CreateFrame("Frame",nil,f); stats:SetWidth(520); stats:SetHeight(490); stats:SetPoint("TOP",f,"TOP",0,-132); stats:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=16,edgeSize=12,insets={left=4,right=4,top=4,bottom=4}}); stats:SetBackdropColor(.045,.065,.1,.98); stats:SetBackdropBorderColor(.2,.28,.4,1); self.statsPanel=stats
+  local stats=CreateFrame("Frame",nil,f); stats:SetWidth(520); stats:SetHeight(490); stats:SetPoint("TOP",f,"TOP",0,-132); self:StylePanel(stats,"sheer"); self.statsPanel=stats
   local st=stats:CreateFontString(nil,"OVERLAY","GameFontNormal"); st:SetPoint("TOP",stats,"TOP",0,-10); st:SetText("CHARACTER TOTALS")
   self.statsColumns={}
   local cardPositions={{10,-34,245,125},{265,-34,245,125},{10,-165,245,170},{265,-165,245,170},{10,-341,245,137},{265,-341,245,137}}
   for i=1,6 do
     local pos=cardPositions[i]; local c=CreateFrame("Frame",nil,stats); c:SetWidth(pos[3]); c:SetHeight(pos[4]); c:SetPoint("TOPLEFT",stats,"TOPLEFT",pos[1],pos[2]);
-    c:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=12,edgeSize=8,insets={left=2,right=2,top=2,bottom=2}}); c:SetBackdropColor(.025,.04,.07,.72); c:SetBackdropBorderColor(.14,.2,.3,.9); self.statsColumns[i]=c
+    self:StylePanel(c,"card"); self.statsColumns[i]=c
   end
 
   self:CreateGearSlot(f,"MAINHAND",0,0,"left"); self.slotButtons.MAINHAND:ClearAllPoints(); self.slotButtons.MAINHAND:SetPoint("TOPLEFT",stats,"BOTTOMLEFT",17,-10)
   self:CreateGearSlot(f,"OFFHAND",0,0,"left"); self.slotButtons.OFFHAND:ClearAllPoints(); self.slotButtons.OFFHAND:SetPoint("LEFT",self.slotButtons.MAINHAND,"RIGHT",10,0)
   self:CreateGearSlot(f,"RANGED",0,0,"left"); self.slotButtons.RANGED:ClearAllPoints(); self.slotButtons.RANGED:SetPoint("LEFT",self.slotButtons.OFFHAND,"RIGHT",10,0)
 
-  local setPanel=CreateFrame("Frame",nil,f); setPanel:SetWidth(880); setPanel:SetHeight(148); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); setPanel:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=16,edgeSize=10,insets={left=3,right=3,top=3,bottom=3}}); setPanel:SetBackdropColor(.035,.05,.075,.98); setPanel:SetBackdropBorderColor(.22,.29,.4,1); self.setPanel=setPanel
+  local setPanel=CreateFrame("Frame",nil,f); setPanel:SetWidth(880); setPanel:SetHeight(148); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); self:StylePanel(setPanel,"panel"); self.setPanel=setPanel
   local sh=setPanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); sh:SetPoint("TOPLEFT",setPanel,"TOPLEFT",12,-9); sh:SetText("SET BONUSES")
   local scroll=CreateFrame("ScrollFrame","AshenBuildsSetScrollFrame",setPanel,"UIPanelScrollFrameTemplate"); scroll:SetPoint("TOPLEFT",setPanel,"TOPLEFT",10,-26); scroll:SetPoint("BOTTOMRIGHT",setPanel,"BOTTOMRIGHT",-29,9); self.setScroll=scroll
   local child=CreateFrame("Frame",nil,scroll); child:SetWidth(826); child:SetHeight(105); scroll:SetScrollChild(child); self.setScrollChild=child
@@ -89,7 +134,7 @@ function AB:RefreshUI()
   if not self.frame then return end
   self.nameBox:SetText(self.current.name or "New Build"); self.classButton:SetText(self.current.class); self.raceButton:SetText(self.current.race); self.specButton:SetText(self.current.spec); self.levelBox:SetText(self:GetBuildLevel())
   local slot,b,id,item,c,enchant
-  for slot,b in pairs(self.slotButtons) do id=self.current.items[slot]; item=id and self:GetItem(id); enchant=AshenBuildsEnchants[(self.current.enchants and self.current.enchants[slot]) or 0]; if item then b.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText(item.n); c=qualityColors[item.q] or qualityColors[1]; b.itemText:SetTextColor(c[1],c[2],c[3]) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText("Empty"); b.itemText:SetTextColor(.45,.5,.6) end; b.enchantText:SetText(enchant and enchant.n or "No enchant"); b.enchantText:SetTextColor(enchant and .2 or .4,enchant and 1 or .45,enchant and .2 or .55) end
+  for slot,b in pairs(self.slotButtons) do id=self.current.items[slot]; item=id and self:GetItem(id); enchant=AshenBuildsEnchants[(self.current.enchants and self.current.enchants[slot]) or 0]; if item then b.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText(item.n); c=qualityColors[item.q] or qualityColors[1]; b.itemText:SetTextColor(c[1],c[2],c[3]) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText("Empty"); b.itemText:SetTextColor(AB.THEME.empty[1],AB.THEME.empty[2],AB.THEME.empty[3]) end; b.enchantText:SetText(enchant and enchant.n or "No enchant"); if enchant then b.enchantText:SetTextColor(.2,1,.2) else b.enchantText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3]) end end
   self:RefreshStats(); self:RefreshSetBonuses()
 end
 
@@ -121,13 +166,13 @@ function AB:RefreshSetBonuses()
     setId=ids[index]; count=counts[setId]; set=self:GetItemSet(setId); col=math.mod(index-1,2)+1; block={}
     if set then
       total=table.getn(set.items or {}); table.insert(block,"|cffffd100"..(set.name or "Item Set").." ("..count.."/"..total..")|r")
-      for i=1,table.getn(set.bonuses or {}) do b=set.bonuses[i]; if b and b[3] and b[3]~="" then table.insert(block,(count>=(b[1] or 0) and "|cff33ff66" or "|cff777f8f").."("..(b[1] or 0)..") Set: "..b[3].."|r") end end
+      for i=1,table.getn(set.bonuses or {}) do b=set.bonuses[i]; if b and b[3] and b[3]~="" then table.insert(block,(count>=(b[1] or 0) and "|cff33ff66" or "|cff9ea5b2").."("..(b[1] or 0)..") Set: "..b[3].."|r") end end
     else
       local loaded=(self.SetCatalogMeta and self.SetCatalogMeta.setCount) or (AshenDB and AshenDB.GetSetCount and AshenDB:GetSetCount()) or 0; table.insert(block,"|cffff3333Set data missing for #"..setId.." ("..loaded.." definitions loaded)|r")
     end
     table.insert(cols[col],table.concat(block,"\n")); lineCounts[col]=lineCounts[col]+table.getn(block)+1
   end
-  if table.getn(ids)==0 then cols[1]={"|cff697386No item set pieces equipped.|r"}; cols[2]={}; lineCounts[1]=1; lineCounts[2]=0 end
+  if table.getn(ids)==0 then cols[1]={"|cff9ea5b2No item set pieces equipped.|r"}; cols[2]={}; lineCounts[1]=1; lineCounts[2]=0 end
   self.setColumnTexts[1]:SetText(table.concat(cols[1],"\n\n")); self.setColumnTexts[2]:SetText(table.concat(cols[2],"\n\n"))
   local maxLines=math.max(lineCounts[1],lineCounts[2]); local h=math.max(105,maxLines*15+8); self.setScrollChild:SetHeight(h); self.setColumnTexts[1]:SetHeight(h); self.setColumnTexts[2]:SetHeight(h); self.setScroll:SetVerticalScroll(0); if self.setScroll.UpdateScrollChildRect then self.setScroll:UpdateScrollChildRect() end
 end
@@ -146,10 +191,11 @@ function AB:RefreshBuildList()
 end
 
 function AB:CreateBuildBrowser()
-  local f=CreateFrame("Frame","AshenBuildsBuildBrowser",UIParent); f:SetWidth(430); f:SetHeight(500); f:SetPoint("CENTER",UIParent,"CENTER",260,0); f:SetFrameStrata("FULLSCREEN_DIALOG"); MakeBackdrop(f); f:Hide(); self.buildBrowser=f
+  local f=CreateFrame("Frame","AshenBuildsBuildBrowser",UIParent); f:SetWidth(430); f:SetHeight(500); f:SetPoint("CENTER",UIParent,"CENTER",260,0); MakeBackdrop(f); self:SetupWindow(f); f:Hide(); self.buildBrowser=f
+  self:ApplyEmberBackground(f,10,0.33,0.4,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,28,-72,-36,58)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-18); t:SetText("SAVED BUILDS")
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
-  self.buildCountText=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); self.buildCountText:SetPoint("TOP",f,"TOP",0,-48)
+  self.buildCountText=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); self.buildCountText:SetPoint("TOP",f,"TOP",0,-50); self.buildCountText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
   self.buildRows={}; local i
   for i=1,10 do
     local r=CreateFrame("Button",nil,f); r:SetWidth(350); r:SetHeight(32); r:SetPoint("TOPLEFT",f,"TOPLEFT",36,-78-(i-1)*36); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
@@ -158,13 +204,13 @@ function AB:CreateBuildBrowser()
     r:SetScript("OnClick",function() if not this.buildName then return end; if arg1=="RightButton" then AB.selectedBuild=this.buildName; AB:DeleteBuild(this.buildName) else AB:LoadBuild(this.buildName); f:Hide() end end)
     self.buildRows[i]=r
   end
-  local help=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); help:SetPoint("BOTTOM",f,"BOTTOM",0,24); help:SetText("Left-click to load  -  Right-click to delete")
+  local help=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); help:SetPoint("BOTTOM",f,"BOTTOM",0,24); help:SetText("Left-click to load  -  Right-click to delete"); help:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
 end
 function AB:OpenBuildBrowser() self:RefreshBuildList(); self.buildBrowser:Show() end
 
 function AB:CreateItemBrowser()
-  local f=CreateFrame("Frame","AshenBuildsItemBrowser",UIParent); f:SetWidth(880); f:SetHeight(650); f:SetPoint("CENTER",UIParent,"CENTER",0,0); f:SetFrameStrata("FULLSCREEN_DIALOG"); MakeBackdrop(f); f:Hide(); self.itemBrowser=f
-  local bg=f:CreateTexture(nil,"BACKGROUND"); bg:SetTexture(.035,.055,.09,.98); bg:SetPoint("TOPLEFT",f,"TOPLEFT",10,-10); bg:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-10,10)
+  local f=CreateFrame("Frame","AshenBuildsItemBrowser",UIParent); f:SetWidth(880); f:SetHeight(650); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true,wheel=function() AB:ScrollItemPage(arg1) end}); f:Hide(); self.itemBrowser=f
+  self:ApplyEmberBackground(f,10,0.55,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-114,-36,48)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-17); t:SetText("ITEM DATABASE")
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
   local search=CreateFrame("EditBox",nil,f,"InputBoxTemplate"); search:SetWidth(390); search:SetHeight(24); search:SetPoint("TOPLEFT",f,"TOPLEFT",26,-52); search:SetAutoFocus(false); self.itemSearch=search; search:SetScript("OnTextChanged",function() AB.itemPage=1; AB:RefreshItemResults() end)
@@ -175,11 +221,13 @@ function AB:CreateItemBrowser()
   self.classButtonFilter=MakeButton(f,"Class: On",90,22); self.classButtonFilter:SetPoint("LEFT",self.usableButton,"RIGHT",7,0); self.classButtonFilter:SetScript("OnClick",function() AB.classOnly=not AB.classOnly; AB.classButtonFilter:SetText(AB.classOnly and "Class: On" or "Class: Off"); AB:RefreshItemResults() end)
   self.hiddenButton=MakeButton(f,"Hidden: Off",92,22); self.hiddenButton:SetPoint("LEFT",self.classButtonFilter,"RIGHT",7,0); self.hiddenButton:SetScript("OnClick",function() AB.showHidden=not AB.showHidden; AB.hiddenButton:SetText(AB.showHidden and "Hidden: On" or "Hidden: Off"); AB:RefreshItemResults() end)
   self.itemRows={}; local i
-  for i=1,12 do local r=CreateFrame("Button",nil,f); r:SetWidth(810); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-120-(i-1)*40); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight"); r.icon=r:CreateTexture(nil,"ARTWORK"); r.icon:SetWidth(30); r.icon:SetHeight(30); r.icon:SetPoint("LEFT",r,"LEFT",2,0); r.name=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.name:SetPoint("TOPLEFT",r.icon,"TOPRIGHT",8,-1); r.name:SetWidth(330); r.name:SetJustifyH("LEFT"); r.stats=r:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); r.stats:SetPoint("BOTTOMLEFT",r.icon,"BOTTOMRIGHT",8,2); r.stats:SetWidth(735); r.stats:SetJustifyH("LEFT"); r:RegisterForClicks("LeftButtonUp","RightButtonUp"); r:SetScript("OnClick",function() if this.itemID then if arg1=="RightButton" or IsControlKeyDown() then AB:OpenSourcePanel(this.itemID) else AB:EquipItem(AB.browserSlot,this.itemID); AB.itemBrowser:Hide() end end end); r:SetScript("OnEnter",function() if this.itemID then AB:ShowItemTooltip(this,this.itemID) end end); r:SetScript("OnLeave",function() GameTooltip:Hide() end); self.itemRows[i]=r end
+  for i=1,12 do local r=CreateFrame("Button",nil,f); r:SetWidth(810); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-120-(i-1)*40); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight"); r.icon=r:CreateTexture(nil,"ARTWORK"); r.icon:SetWidth(30); r.icon:SetHeight(30); r.icon:SetPoint("LEFT",r,"LEFT",2,0); r.name=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.name:SetPoint("TOPLEFT",r.icon,"TOPRIGHT",8,-1); r.name:SetWidth(330); r.name:SetJustifyH("LEFT"); r.stats=r:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); r.stats:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3]); r.stats:SetPoint("BOTTOMLEFT",r.icon,"BOTTOMRIGHT",8,2); r.stats:SetWidth(735); r.stats:SetJustifyH("LEFT"); r:RegisterForClicks("LeftButtonUp","RightButtonUp"); r:SetScript("OnClick",function() if this.itemID then if arg1=="RightButton" or IsControlKeyDown() then AB:OpenSourcePanel(this.itemID) else AB:EquipItem(AB.browserSlot,this.itemID); AB.itemBrowser:Hide() end end end); r:SetScript("OnEnter",function() if this.itemID then AB:ShowItemTooltip(this,this.itemID) end end); r:SetScript("OnLeave",function() GameTooltip:Hide() end); self.itemRows[i]=r end
   self.prevItem=MakeButton(f,"Previous",82,22); self.prevItem:SetPoint("BOTTOMLEFT",f,"BOTTOMLEFT",28,18); self.prevItem:SetScript("OnClick",function() if AB.itemPage>1 then AB.itemPage=AB.itemPage-1; AB:RefreshItemResults() end end)
   self.nextItem=MakeButton(f,"Next",82,22); self.nextItem:SetPoint("LEFT",self.prevItem,"RIGHT",8,0); self.nextItem:SetScript("OnClick",function() AB.itemPage=AB.itemPage+1; AB:RefreshItemResults() end)
   self.pageText=f:CreateFontString(nil,"OVERLAY","GameFontHighlight"); self.pageText:SetPoint("LEFT",self.nextItem,"RIGHT",12,0); self.packText=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); self.packText:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-26,22)
 end
+-- Wheel down = next page, wheel up = previous page; RefreshItemResults clamps past the last page.
+function AB:ScrollItemPage(delta) if delta<0 then self.itemPage=self.itemPage+1 elseif self.itemPage>1 then self.itemPage=self.itemPage-1 else return end; self:RefreshItemResults() end
 function AB:OpenItemBrowser(slot) self.browserSlot=slot; self.itemPage=1; self.itemSearch:SetText(""); self.itemBrowser:Show(); self:RefreshItemResults() end
 
 function AB:RefreshItemResults()
@@ -188,18 +236,19 @@ function AB:RefreshItemResults()
   for i=1,table.getn(AshenBuildsItemOrder) do id=AshenBuildsItemOrder[i]; r=self:GetRawItem(id); if r then armorType=self:GetArmorTypeRaw(r); weaponType=self:GetWeaponTypeRaw(r); if self:NormalizeSlot(self.browserSlot,{slot=r[3]}) and (query=="" or string.find(string.lower(r[1] or ""),query,1,true) or string.find(self:GetSourceSearchText(id),query,1,true) or self:RawStatsMatch(r,query)) and (self.qualityFilter<0 or r[2]==self.qualityFilter) and (not self.usableOnly or (tonumber(r[4]) or 0)<=buildLevel) and (not self.classOnly or self:IsClassAllowedRaw(r,self.current.class)) and (self.showHidden or not self:IsHiddenRaw(r)) then table.insert(matches,id) end end end
   local per=table.getn(self.itemRows); local pages=math.max(1,math.ceil(table.getn(matches)/per)); if self.itemPage>pages then self.itemPage=pages end
   local row,c,parts,stat,value,index
-  for i=1,per do index=(self.itemPage-1)*per+i; row=self.itemRows[i]; id=matches[index]; item=id and self:GetItem(id); if item then row.itemID=id; row.icon:SetTexture(item.icon); row.name:SetText(item.n.."  |cff7f8999L"..(item.req or 0).." / i"..(item.ilvl or 0).."|r"); c=qualityColors[item.q] or qualityColors[1]; row.name:SetTextColor(c[1],c[2],c[3]); parts={}; for stat,value in pairs(item.stats or {}) do if stat~="dps" and value~=0 then table.insert(parts,(self.STAT_LABELS[stat] or stat).." +"..value) end end; local direct=self:GetDirectSourceSummary(id); if direct~="" then table.insert(parts,direct) end; row.stats:SetText(table.concat(parts,"  •  ")); row:Show() else row.itemID=nil; row:Hide() end end
+  for i=1,per do index=(self.itemPage-1)*per+i; row=self.itemRows[i]; id=matches[index]; item=id and self:GetItem(id); if item then row.itemID=id; row.icon:SetTexture(item.icon); row.name:SetText(item.n.."  |cffa3abb8L"..(item.req or 0).." / i"..(item.ilvl or 0).."|r"); c=qualityColors[item.q] or qualityColors[1]; row.name:SetTextColor(c[1],c[2],c[3]); parts={}; for stat,value in pairs(item.stats or {}) do if stat~="dps" and value~=0 then table.insert(parts,(self.STAT_LABELS[stat] or stat).." +"..value) end end; local direct=self:GetDirectSourceSummary(id); if direct~="" then table.insert(parts,direct) end; row.stats:SetText(table.concat(parts,"  •  ")); row:Show() else row.itemID=nil; row:Hide() end end
   self.pageText:SetText("Page "..self.itemPage.." / "..pages.."  ("..table.getn(matches).." matches)"); if self.itemPage>1 then self.prevItem:Enable() else self.prevItem:Disable() end; if self.itemPage<pages then self.nextItem:Enable() else self.nextItem:Disable() end; local pack=AshenBuildsDBPack; self.packText:SetText((pack and pack.name or "AshenDB").." - "..(pack and pack.count or 0).." items")
 end
 
 function AB:CreateEnchantBrowser()
-  local f=CreateFrame("Frame",nil,UIParent); f:SetWidth(470); f:SetHeight(480); f:SetPoint("CENTER",UIParent,"CENTER",0,0); f:SetFrameStrata("FULLSCREEN_DIALOG"); MakeBackdrop(f); f:Hide(); self.enchantBrowser=f
+  local f=CreateFrame("Frame","AshenBuildsEnchantBrowser",UIParent); f:SetWidth(470); f:SetHeight(480); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f); f:Hide(); self.enchantBrowser=f
+  self:ApplyEmberBackground(f,10,0.5,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,30,-82,-34,50)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-18); t:SetText("SELECT ENCHANT"); local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
   self.enchantRows={}; local none=MakeButton(f,"Remove Enchant",150,23); none:SetPoint("TOP",f,"TOP",0,-52); none:SetScript("OnClick",function() AB:ApplyEnchant(AB.enchantSlot,0); f:Hide() end); local i
   for i=1,10 do local r=CreateFrame("Button",nil,f); r:SetWidth(390); r:SetHeight(30); r:SetPoint("TOPLEFT",f,"TOPLEFT",38,-88-(i-1)*34); r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetAllPoints(r); r.text:SetJustifyH("LEFT"); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight"); r:SetScript("OnClick",function() if this.enchantID then AB:ApplyEnchant(AB.enchantSlot,this.enchantID); f:Hide() end end); self.enchantRows[i]=r end
 end
 function AB:OpenEnchantBrowser(slot) self.enchantSlot=slot; local matches={}; local i,id,e; for i=1,table.getn(AshenBuildsEnchantOrder) do id=AshenBuildsEnchantOrder[i]; e=AshenBuildsEnchants[id]; if e.slots[slot] then table.insert(matches,id) end end; for i=1,table.getn(self.enchantRows) do local r=self.enchantRows[i]; id=matches[i]; e=id and AshenBuildsEnchants[id]; if e then r.enchantID=id; r.text:SetText(e.n); r:Show() else r.enchantID=nil; r:Hide() end end; self.enchantBrowser:Show() end
-function AB:CreateCodeDialog() local f=CreateFrame("Frame",nil,UIParent); f:SetWidth(650); f:SetHeight(190); f:SetPoint("CENTER",UIParent,"CENTER",0,0); f:SetFrameStrata("TOOLTIP"); MakeBackdrop(f); f:Hide(); self.codeDialog=f; f.title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); f.title:SetPoint("TOP",f,"TOP",0,-18); local edit=CreateFrame("EditBox",nil,f,"InputBoxTemplate"); edit:SetWidth(580); edit:SetHeight(30); edit:SetPoint("TOP",f,"TOP",0,-62); edit:SetAutoFocus(false); edit:SetMaxLetters(4096); self.codeEdit=edit; local action=MakeButton(f,"Import",90,24); action:SetPoint("BOTTOM",f,"BOTTOM",-50,24); self.codeAction=action; local cancel=MakeButton(f,"Close",90,24); cancel:SetPoint("LEFT",action,"RIGHT",10,0); cancel:SetScript("OnClick",function() f:Hide() end) end
+function AB:CreateCodeDialog() local f=CreateFrame("Frame","AshenBuildsCodeDialog",UIParent); f:SetWidth(650); f:SetHeight(190); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f); f:Hide(); self.codeDialog=f; self:ApplyEmberBackground(f,10,0.5,0.5,0.45); self:AddEmberHeader(f,34); f.title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); f.title:SetPoint("TOP",f,"TOP",0,-18); local edit=CreateFrame("EditBox",nil,f,"InputBoxTemplate"); edit:SetWidth(580); edit:SetHeight(30); edit:SetPoint("TOP",f,"TOP",0,-62); edit:SetAutoFocus(false); edit:SetMaxLetters(4096); self.codeEdit=edit; local action=MakeButton(f,"Import",90,24); action:SetPoint("BOTTOM",f,"BOTTOM",-50,24); self.codeAction=action; local cancel=MakeButton(f,"Close",90,24); cancel:SetPoint("LEFT",action,"RIGHT",10,0); cancel:SetScript("OnClick",function() f:Hide() end) end
 function AB:ShowCodeDialog(title,text,isImport) self.codeDialog.title:SetText(title); self.codeEdit:SetText(text or ""); self.codeDialog:Show(); self.codeEdit:SetFocus(); self.codeEdit:HighlightText(); if isImport then self.codeAction:SetText("Import"); self.codeAction:Show(); self.codeAction:SetScript("OnClick",function() if AB:ImportBuild(AB.codeEdit:GetText()) then AB.codeDialog:Hide() end end) else self.codeAction:Hide() end end
 function AB:ToggleUI() if self.frame:IsShown() then self.frame:Hide() else self:RefreshUI(); self.frame:Show() end end
 
@@ -400,7 +449,8 @@ function AB:ShowItemTooltip(owner,id)
 end
 
 function AB:CreateSourcePanel()
-  local f=CreateFrame("Frame","AshenBuildsSourcePanel",UIParent); f:SetWidth(610); f:SetHeight(650); f:SetPoint("CENTER",UIParent,"CENTER",180,0); f:SetFrameStrata("FULLSCREEN_DIALOG"); MakeBackdrop(f); f:Hide(); self.sourcePanel=f
+  local f=CreateFrame("Frame","AshenBuildsSourcePanel",UIParent); f:SetWidth(610); f:SetHeight(650); f:SetPoint("CENTER",UIParent,"CENTER",180,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.sourcePanel=f
+  self:ApplyEmberBackground(f,10,0.33,0.45,0.4); self:AddEmberHeader(f,36); self:AddEmberWell(f,20,-104,-20,20)
   f.title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); f.title:SetPoint("TOPLEFT",f,"TOPLEFT",28,-22); f.title:SetWidth(520); f.title:SetJustifyH("LEFT")
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
   f.icon=f:CreateTexture(nil,"ARTWORK"); f.icon:SetWidth(44); f.icon:SetHeight(44); f.icon:SetPoint("TOPLEFT",f,"TOPLEFT",28,-52)
@@ -422,7 +472,7 @@ function AB:OpenSourcePanel(id)
     elseif s[1]=="drop" then
       table.insert(lines,"|cffffd100DROPPED BY|r"); table.insert(lines,"|cffffffff"..(s[3] or "Unknown Creature").."|r"); if s[4] and s[4]~="" then table.insert(lines,s[4]) end; local chance=self:FormatDropChance(s[5]); if chance then table.insert(lines,"Drop Chance: "..chance) else table.insert(lines,"Drop chance not available") end
     elseif s[1]=="more" then
-      table.insert(lines,"|cff777f8f+"..(s[2] or 0).." additional creature drop sources omitted from the in-memory pack.|r")
+      table.insert(lines,"|cff9ea5b2+"..(s[2] or 0).." additional creature drop sources omitted from the in-memory pack.|r")
     elseif s[1]=="vendor" then
       table.insert(lines,"|cffffd100SOLD BY|r"); table.insert(lines,"|cffffffff"..(s[3] or "Unknown Vendor").."|r"); if s[4] and s[4]~="" then table.insert(lines,s[4]) end
     elseif s[1]=="quest" then

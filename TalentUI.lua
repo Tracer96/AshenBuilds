@@ -17,6 +17,7 @@ local function button(parent, text, width, height)
   result:SetWidth(width)
   result:SetHeight(height)
   result:SetText(text)
+  AB:SkinButton(result, "ember")
   return result
 end
 
@@ -92,14 +93,17 @@ function AB:CreateTalentUI()
   end)
   self.talentOpenButton = open
 
-  local frame = CreateFrame("Frame", nil, UIParent)
+  local frame = CreateFrame("Frame", "AshenBuildsTalentFrame", UIParent)
   frame:SetWidth(1060)
   frame:SetHeight(730)
   frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-  frame:SetFrameStrata("FULLSCREEN_DIALOG")
   backdrop(frame)
+  self:SetupWindow(frame, {fit = true})
   frame:Hide()
   self.talentFrame = frame
+  self:ApplyEmberBackground(frame, 11, 0.5, 0.5, 0.45)
+  self:AddEmberHeader(frame, 72, 11)
+  self:AddEmberFloor(frame, 36, 11)
 
   local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOP", frame, "TOP", 0, -18)

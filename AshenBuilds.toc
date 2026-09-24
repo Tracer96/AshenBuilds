@@ -95,6 +95,7 @@ Data\Talents\SHAMAN.lua
 Data\Talents\WARLOCK.lua
 Data\Talents\WARRIOR.lua
 Core.lua
+Theme.lua
 TalentEngine.lua
 UI.lua
 TalentUI.lua
