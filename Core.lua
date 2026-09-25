@@ -87,6 +87,7 @@ local function AB_NewBuild(name)
   }
 end
 AshenBuilds.NewBuildData = AB_NewBuild
+AshenBuilds.Print = function(self,msg) AB_Print(msg) end
 
 function AshenBuilds:InitializeDB()
   if not AshenBuildsDB then AshenBuildsDB = {} end
@@ -225,12 +226,14 @@ function AshenBuilds:SaveBuild(name)
   name = name or self.current.name or "Unnamed Build"; if name == "" then name = "Unnamed Build" end
   self.current.name=name; self.current.updated=time(); AshenBuildsDB.builds[name]=self:DeepCopy(self.current); AshenBuildsDB.current=self.current
   AB_Print("Saved |cffffffff"..name.."|r."); self:RefreshBuildList()
+  if self.OnBuildSaved then self:OnBuildSaved(name) end
 end
 function AshenBuilds:LoadBuild(name)
   local build=AshenBuildsDB.builds[name]; if not build then return end
   self.current=self:DeepCopy(build); self:MigrateBuild(self.current); AshenBuildsDB.current=self.current; self:RefreshUI(); AB_Print("Loaded |cffffffff"..name.."|r.")
 end
 function AshenBuilds:DeleteBuild(name)
+  if self.OnBuildDeleted then self:OnBuildDeleted(name) end
   AshenBuildsDB.builds[name]=nil; if self.selectedBuild==name then self.selectedBuild=nil end; self:RefreshBuildList(); AB_Print("Deleted |cffffffff"..name.."|r.")
 end
 function AshenBuilds:DeepCopy(value)
@@ -242,30 +245,42 @@ local AB_CHARS="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_
 local function Enc(n) n=tonumber(n) or 0; if n==0 then return "0" end; local out=""; while n>0 do local r=math.mod(n,64); out=string.sub(AB_CHARS,r+1,r+1)..out; n=math.floor(n/64) end; return out end
 local function Dec(s) local n=0; for i=1,string.len(s) do local p=string.find(AB_CHARS,string.sub(s,i,i),1,true); if not p then return nil end; n=n*64+(p-1) end; return n end
 
-function AshenBuilds:ExportBuild()
-  local parts={"AB2",Enc(AB_IndexOf(self.CLASSES,self.current.class)),Enc(AB_IndexOf(self.RACES,self.current.race)),Enc(self.current.level),Enc(AB_IndexOf(self.SPECS[self.current.class],self.current.spec))}
+AshenBuilds.EncodeNumber=Enc
+AshenBuilds.DecodeNumber=Dec
+
+function AshenBuilds:ExportBuild(build)
+  build=build or self.current
+  local parts={"AB2",Enc(AB_IndexOf(self.CLASSES,build.class)),Enc(AB_IndexOf(self.RACES,build.race)),Enc(build.level),Enc(AB_IndexOf(self.SPECS[build.class],build.spec))}
   local i,slot
-  for i=1,table.getn(self.SLOTS) do slot=self.SLOTS[i]; table.insert(parts,Enc(self.current.items[slot] or 0)); table.insert(parts,Enc((self.current.enchants and self.current.enchants[slot]) or 0)) end
+  for i=1,table.getn(self.SLOTS) do slot=self.SLOTS[i]; table.insert(parts,Enc(build.items[slot] or 0)); table.insert(parts,Enc((build.enchants and build.enchants[slot]) or 0)) end
   return table.concat(parts,".")
 end
 
 function AshenBuilds:ImportBuild(code)
   if not code then AB_Print("Invalid build code.") return false end
   if string.sub(code,1,4)=="AB1." then return self:ImportLegacyBuild(code) end
-  if string.sub(code,1,4)~="AB2." then AB_Print("Invalid build code.") return false end
+  local build,err=self:DecodeBuild(code)
+  if not build then AB_Print(err) return false end
+  self.current=build; AshenBuildsDB.current=build; self:RefreshUI(); AB_Print("Build imported."); return true
+end
+
+-- Parses an AB2 code into a build table without touching the planner.
+-- Returns nil plus a message when the code is malformed.
+function AshenBuilds:DecodeBuild(code)
+  if type(code)~="string" or string.sub(code,1,4)~="AB2." then return nil,"Invalid build code." end
   local tokens={}; for token in string.gfind(code,"[^%.]+") do table.insert(tokens,token) end
   local legacy17={"HEAD","NECK","SHOULDER","BACK","CHEST","WRIST","HANDS","WAIST","LEGS","FEET","FINGER1","FINGER2","TRINKET1","TRINKET2","MAINHAND","OFFHAND","RANGED"}
   local newCount=5+(table.getn(self.SLOTS)*2)
   local legacyCount=5+(table.getn(legacy17)*2)
   local slots=self.SLOTS
   if table.getn(tokens)==legacyCount then slots=legacy17
-  elseif table.getn(tokens)~=newCount then AB_Print("Incomplete build code.") return false end
+  elseif table.getn(tokens)~=newCount then return nil,"Incomplete build code." end
   local build=AB_NewBuild("Imported Build")
-  build.class=self.CLASSES[Dec(tokens[2]) or 1] or "Warrior"; build.race=self.RACES[Dec(tokens[3]) or 1] or "Human"; build.level=Dec(tokens[4]) or 60
+  build.class=self.CLASSES[Dec(tokens[2]) or 1] or "Warrior"; build.race=self.RACES[Dec(tokens[3]) or 1] or "Human"; build.level=AB_ValidLevel(Dec(tokens[4]) or 60)
   build.spec=(self.SPECS[build.class] or {"Custom"})[Dec(tokens[5]) or 1] or "Custom"
   local i,id,enchantID,pos=1,nil,nil,6
   for i=1,table.getn(slots) do id=Dec(tokens[pos]); enchantID=Dec(tokens[pos+1]); if id and self:GetItem(id) then build.items[slots[i]]=id end; if enchantID and enchantID>0 and AshenBuildsEnchants[enchantID] then build.enchants[slots[i]]=enchantID end; pos=pos+2 end
-  self.current=build; AshenBuildsDB.current=build; self:RefreshUI(); AB_Print("Build imported."); return true
+  return build
 end
 
 function AshenBuilds:ImportLegacyBuild(code)
@@ -476,6 +491,7 @@ eventFrame:SetScript("OnEvent",function()
       local arg=split and string.sub(msg,split+1) or ""
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
+      elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)
         if not itemId then

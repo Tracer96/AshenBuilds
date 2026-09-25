@@ -96,6 +96,7 @@ function AB:CreateUI()
   local level=CreateFrame("EditBox",nil,f,"InputBoxTemplate"); level:SetWidth(42); level:SetHeight(22); level:SetPoint("TOPLEFT",f,"TOPLEFT",380,-98); level:SetNumeric(true); level:SetMaxLetters(2); level:SetAutoFocus(false); level:SetScript("OnEnterPressed",function() AB:SetLevel(this:GetText()); this:ClearFocus() end); level:SetScript("OnEditFocusLost",function() AB:SetLevel(this:GetText()) end); self.levelBox=level
   local browse=MakeButton(f,"ITEM DATABASE",130,25); browse:SetPoint("TOPRIGHT",f,"TOPRIGHT",-28,-86); browse:SetScript("OnClick",function() AB:OpenItemBrowser("HEAD") end)
   local saved=MakeButton(f,"SAVED BUILDS",118,25); saved:SetPoint("RIGHT",browse,"LEFT",-8,0); saved:SetScript("OnClick",function() AB:OpenBuildBrowser() end)
+  local community=MakeButton(f,"COMMUNITY",104,25); community:SetPoint("RIGHT",saved,"LEFT",-8,0); community:SetScript("OnClick",function() AB:OpenCommunity() end); self.communityButton=community
 
   self.slotButtons={}
   local leftSlots={"HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST"}; local rightSlots={"HANDS","WAIST","LEGS","FEET","FINGER1","FINGER2","TRINKET1","TRINKET2"}; local i
@@ -185,7 +186,7 @@ function AB:RefreshBuildList()
   local i,row
   for i=1,table.getn(self.buildRows) do
     row=self.buildRows[i]; name=names[i]
-    if name then row.buildName=name; row.text:SetText(name); row:Show() else row.buildName=nil; row:Hide() end
+    if name then row.buildName=name; local pub=self.IsBuildPublished and self:IsBuildPublished(name); row.text:SetText(pub and (name.."  |cffffd100public|r") or name); row.publish:SetText(pub and "Unpublish" or "Publish"); row:Show() else row.buildName=nil; row:Hide() end
   end
   if self.buildCountText then self.buildCountText:SetText(table.getn(names).." saved build"..(table.getn(names)==1 and "" or "s")) end
 end
@@ -199,12 +200,13 @@ function AB:CreateBuildBrowser()
   self.buildRows={}; local i
   for i=1,10 do
     local r=CreateFrame("Button",nil,f); r:SetWidth(350); r:SetHeight(32); r:SetPoint("TOPLEFT",f,"TOPLEFT",36,-78-(i-1)*36); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-    r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetPoint("LEFT",r,"LEFT",10,0); r.text:SetWidth(250); r.text:SetJustifyH("LEFT")
+    r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetPoint("LEFT",r,"LEFT",10,0); r.text:SetWidth(240); r.text:SetJustifyH("LEFT")
+    r.publish=MakeButton(r,"Publish",86,22); r.publish:SetPoint("RIGHT",r,"RIGHT",-4,0); r.publish:SetScript("OnClick",function() local n=this:GetParent().buildName; if not n then return end; if AB:IsBuildPublished(n) then AB:UnpublishBuild(n) else AB:PublishBuild(n) end end)
     r:RegisterForClicks("LeftButtonUp","RightButtonUp")
     r:SetScript("OnClick",function() if not this.buildName then return end; if arg1=="RightButton" then AB.selectedBuild=this.buildName; AB:DeleteBuild(this.buildName) else AB:LoadBuild(this.buildName); f:Hide() end end)
     self.buildRows[i]=r
   end
-  local help=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); help:SetPoint("BOTTOM",f,"BOTTOM",0,24); help:SetText("Left-click to load  -  Right-click to delete"); help:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
+  local help=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); help:SetPoint("BOTTOM",f,"BOTTOM",0,24); help:SetText("Left-click to load  -  Right-click to delete  -  Publish to share"); help:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
 end
 function AB:OpenBuildBrowser() self:RefreshBuildList(); self.buildBrowser:Show() end
 

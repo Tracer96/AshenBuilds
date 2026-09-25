@@ -99,3 +99,5 @@ Theme.lua
 TalentEngine.lua
 UI.lua
 TalentUI.lua
+Community.lua
+CommunityUI.lua
