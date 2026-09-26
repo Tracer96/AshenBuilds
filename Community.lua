@@ -14,14 +14,20 @@ local AB = AshenBuilds
 -- (set by the server), which is what makes authorship and votes trustworthy:
 --   P~ver~name~code~sum      author publishes or updates one of their builds
 --   U~ver~name               author withdraws a build
---   V~author~name~1|0        sender upvotes (1) or removes their upvote (0)
+--   V~author~name~1|0~ts     sender upvotes (1) or removes their upvote (0)
+--   Y~author~name~1|0~ts[~author~name~1|0~ts...]  sender repeats their own votes
 --   Q                        sender just came online and wants the catalog
 --   R~requester              sender is answering requester's Q (others stand down)
 --   F~author~ver~name~code~sum  relayed copy of someone else's build
 -- "sum" is a checksum of name+code: if a message is altered in transit (e.g.
 -- cross-faction language scrambling) the build is dropped instead of loading
 -- the wrong items.
---   W~author~name~a,b,c      relayed voter list for a build
+--   X~author~name~a.ts,!b.ts relayed vote records ("!" = upvote removed)
+-- 0.9.x clients sent V without ts and W~author~name~a,b (plain voter names);
+-- both are still accepted, as the oldest possible records. Relays use X so
+-- those clients ignore records they would misread.
+-- Each player's vote on a build is a timestamped record and the newest record
+-- wins, so removals spread (and backfill) exactly like upvotes do.
 -- Relayed data (F/W) cannot be verified, so it never overrides what an author
 -- sent directly; an author's own P always wins.
 
@@ -38,6 +44,7 @@ local MAX_VOTERS = 500
 local EXPIRE = 60 * 86400      -- forget builds nobody has mentioned for 60 days
 local MAX_NAME = 32
 local MAX_CLOCK_SKEW = 86400
+local CHUNK = 180              -- payload budget for batched vote messages
 
 local Enc, Dec = AB.EncodeNumber, AB.DecodeNumber
 local MAX_QUEUE = 300
@@ -149,7 +156,7 @@ local function ApplyBuild(author, name, ver, code, confirmed)
   if not build then return end
   e = e or {}
   e.id = id; e.author = author; e.name = name; e.ver = ver; e.code = code; e.confirmed = confirmed and true or false; e.seen = Now()
-  e.class = build.class; e.race = build.race; e.level = build.level; e.spec = build.spec
+  e.class = build.class; e.race = build.race; e.level = build.level; e.spec = build.spec; e.talents = AB:GetTalentSplit(build)
   c.builds[id] = e
   RefreshViews()
 end
@@ -161,17 +168,24 @@ local function RemoveBuild(id, ver)
   RefreshViews()
 end
 
-local function SetVote(id, voter, on)
+-- Records the newest known vote from one player on one build.
+-- Returns true when it changed anything.
+local function SetVote(id, voter, on, t)
+  if not t or t > Now() + MAX_CLOCK_SKEW or voter == "" then return false end
   local c = DB(); local e = c.builds[id]
-  if e and e.author == voter then return end
+  if e and e.author == voter then return false end
   local v = c.votes[id]
-  if on then
-    if not v then v = {}; c.votes[id] = v end
-    if not v[voter] and CountKeys(v) >= MAX_VOTERS then return end
-    v[voter] = true
-  elseif v then
-    v[voter] = nil
-  end
+  if not v then v = {}; c.votes[id] = v end
+  local r = v[voter]
+  if r and r.t >= t then return false end
+  if not r and CountKeys(v) >= MAX_VOTERS then return false end
+  v[voter] = {on = on and true or false, t = t}
+  return true
+end
+
+local function SplitId(id)
+  local pos = string.find(id, ":", 1, true)
+  return string.sub(id, 1, pos - 1), string.sub(id, pos + 1)
 end
 
 local function PruneCatalog()
@@ -179,6 +193,16 @@ local function PruneCatalog()
   local me = Me()
   for id, e in pairs(c.builds) do
     if e.author ~= me and (e.seen or 0) < cutoff then c.builds[id] = nil; c.votes[id] = nil end
+  end
+  local v, voter, r
+  for id, v in pairs(c.votes) do
+    for voter, r in pairs(v) do
+      -- Older saves stored plain "true" upvotes with no timestamp.
+      if r == true then v[voter] = {on = true, t = 0}
+      -- Removal records only matter until everyone has heard them.
+      elseif not r.on and r.t < cutoff then v[voter] = nil end
+    end
+    if not next(v) then c.votes[id] = nil end
   end
   for id, e in pairs(c.tomb) do if (e.t or 0) < cutoff then c.tomb[id] = nil end end
 end
@@ -198,7 +222,7 @@ function AB:PublishBuild(name)
   local saved = AshenBuildsDB.builds[name]; if not saved then return end
   local wire = Clean(name)
   if wire ~= name then
-    self:Print("Build names used for publishing can't contain ~ | or commas, or exceed " .. MAX_NAME .. " characters. Rename the build and save it again.")
+    self.Print("Build names used for publishing can't contain ~ | or commas, or exceed " .. MAX_NAME .. " characters. Rename the build and save it again.")
     return
   end
   local c, me = DB(), Me()
@@ -209,9 +233,9 @@ function AB:PublishBuild(name)
   c.mine[name] = true
   local code = self:ExportBuild(saved)
   c.builds[id] = {id = id, author = me, name = name, ver = ver, code = code, confirmed = true, seen = Now(),
-    class = saved.class, race = saved.race, level = self:GetBuildLevel(saved), spec = saved.spec}
+    class = saved.class, race = saved.race, level = self:GetBuildLevel(saved), spec = saved.spec, talents = self:GetTalentSplit(saved)}
   AnnounceOwn(name)
-  self:Print("Published |cffffffff" .. name .. "|r to community builds.")
+  self.Print("Published |cffffffff" .. name .. "|r to community builds.")
   RefreshViews()
 end
 
@@ -224,22 +248,28 @@ function AB:UnpublishBuild(name)
   c.mine[name] = nil
   RemoveBuild(id, ver)
   Send("U~" .. Enc(ver) .. "~" .. name)
-  self:Print("Withdrew |cffffffff" .. name .. "|r from community builds.")
+  self.Print("Withdrew |cffffffff" .. name .. "|r from community builds.")
 end
 
 -- Re-saving a published build republishes it; deleting withdraws it.
 function AB:OnBuildSaved(name) if self:IsBuildPublished(name) then self:PublishBuild(name) end end
 function AB:OnBuildDeleted(name) if self:IsBuildPublished(name) then self:UnpublishBuild(name) end end
 
-function AB:HasVoted(id) local v = DB().votes[id]; return v and v[Me()] and true or false end
-function AB:GetVoteCount(id) return CountKeys(DB().votes[id]) end
+function AB:HasVoted(id) local v = DB().votes[id]; local r = v and v[Me()]; return r and r.on and true or false end
+function AB:GetVoteCount(id)
+  local n, voter, r = 0, nil, nil
+  for voter, r in pairs(DB().votes[id] or {}) do if r.on then n = n + 1 end end
+  return n
+end
 
 function AB:ToggleVote(id)
   local c, me = DB(), Me(); local e = c.builds[id]
   if not e or e.author == me then return end
   local on = not self:HasVoted(id)
-  SetVote(id, me, on)
-  Send("V~" .. e.author .. "~" .. e.name .. "~" .. (on and "1" or "0"))
+  local old = c.votes[id] and c.votes[id][me]
+  local t = Now(); if old and old.t >= t then t = old.t + 1 end
+  SetVote(id, me, on, t)
+  Send("V~" .. e.author .. "~" .. e.name .. "~" .. (on and "1" or "0") .. "~" .. Enc(t))
   RefreshViews()
 end
 
@@ -257,7 +287,7 @@ function AB:LoadCommunityBuild(id)
   local build = self:DecodeBuild(e.code); if not build then return end
   build.name = e.name .. " (" .. e.author .. ")"
   self.current = build; AshenBuildsDB.current = build; self:RefreshUI()
-  self:Print("Loaded |cffffffff" .. e.name .. "|r by " .. e.author .. ". Save it to keep a copy.")
+  self.Print("Loaded |cffffffff" .. e.name .. "|r by " .. e.author .. ". Save it to keep a copy.")
 end
 
 ---------------------------------------------------------------------------
@@ -275,12 +305,30 @@ function AB:RequestCommunitySync(force)
   return true
 end
 
+-- Sends our own vote records (including removals) straight from the voter,
+-- batched several per message. Relays can miss votes; this can't.
+local function AnnounceOwnVotes()
+  local c, me, id, v, r, author, name, item = DB(), Me(), nil, nil, nil, nil, nil, nil
+  local batch = ""
+  for id, v in pairs(c.votes) do
+    r = v[me]
+    if r then
+      author, name = SplitId(id)
+      item = author .. "~" .. name .. "~" .. (r.on and "1" or "0") .. "~" .. Enc(r.t)
+      if batch ~= "" and string.len(batch) + string.len(item) > CHUNK then Send("Y~" .. batch); batch = "" end
+      batch = (batch == "" and item) or (batch .. "~" .. item)
+    end
+  end
+  if batch ~= "" then Send("Y~" .. batch) end
+end
+
 local function AnnounceAllOwn()
   local now = GetTime()
   if now - lastAnnounce < ANNOUNCE_COOLDOWN then return end
   lastAnnounce = now
   local c, me, name, id, t = DB(), Me(), nil, nil, nil
   for name in pairs(c.mine) do AnnounceOwn(name) end
+  AnnounceOwnVotes()
   -- Repeat our recent withdrawals so players who were offline drop them too.
   local prefix = me .. ":"
   for id, t in pairs(c.tomb) do
@@ -290,24 +338,27 @@ end
 
 local function Relay(requester)
   lastRelay = GetTime()
-  local list, me, i, e, voters, v, chunk = AB:GetCommunityBuilds(), Me(), nil, nil, nil, nil, nil
+  local list, me, i, e, v, r, chunk, item = AB:GetCommunityBuilds(), Me(), nil, nil, nil, nil, nil, nil
   table.sort(list, function(a, b) if a.votes ~= b.votes then return a.votes > b.votes end return a.seen > b.seen end)
   Send("R~" .. requester)
   local sent = 0
   for i = 1, table.getn(list) do
     e = list[i]
     if sent >= RELAY_LIMIT then break end
+    -- The requester already has their own builds, and ours go out as P, but
+    -- the votes on every build are relayed so nobody misses them.
     if e.author ~= me and e.author ~= requester then
       Send("F~" .. e.author .. "~" .. Enc(e.ver) .. "~" .. e.name .. "~" .. e.code .. "~" .. Checksum(e.name, e.code))
-      -- Voter lists are split so every message stays under the chat length limit.
-      chunk = ""
-      for v in pairs(DB().votes[e.id] or {}) do
-        if string.len(chunk) + string.len(v) > 150 then Send("W~" .. e.author .. "~" .. e.name .. "~" .. chunk); chunk = "" end
-        chunk = (chunk == "" and v) or (chunk .. "," .. v)
-      end
-      if chunk ~= "" then Send("W~" .. e.author .. "~" .. e.name .. "~" .. chunk) end
-      sent = sent + 1
     end
+    -- Vote records are split so every message stays under the chat length limit.
+    chunk = ""
+    for v, r in pairs(DB().votes[e.id] or {}) do
+      item = (r.on and "" or "!") .. v .. "." .. Enc(r.t)
+      if chunk ~= "" and string.len(chunk) + string.len(item) > CHUNK - 70 then Send("X~" .. e.author .. "~" .. e.name .. "~" .. chunk); chunk = "" end
+      chunk = (chunk == "" and item) or (chunk .. "," .. item)
+    end
+    if chunk ~= "" then Send("X~" .. e.author .. "~" .. e.name .. "~" .. chunk) end
+    sent = sent + 1
   end
 end
 
@@ -328,11 +379,28 @@ function AB:HandleCommunityMessage(sender, msg)
     -- The author outranks any relayed copy; only their own newer P beats a U.
     if ver and ver <= Now() + MAX_CLOCK_SKEW and (not e or not e.confirmed or e.ver <= ver) then RemoveBuild(id, ver) end
   elseif kind == "V" and f[4] then
-    SetVote(BuildId(Clean(f[2]), Clean(f[3])), sender, f[4] == "1"); RefreshViews()
+    -- Older clients omit the timestamp; the vote is live, so it happened now.
+    local t = (f[5] and Dec(f[5])) or Now()
+    if SetVote(BuildId(Clean(f[2]), Clean(f[3])), sender, f[4] == "1", t) then RefreshViews() end
+  elseif kind == "Y" then
+    local i, changed = 2, false
+    while f[i + 3] do
+      if SetVote(BuildId(Clean(f[i]), Clean(f[i + 1])), sender, f[i + 2] == "1", Dec(f[i + 3])) then changed = true end
+      i = i + 4
+    end
+    if changed then RefreshViews() end
   elseif kind == "W" and f[4] then
-    local id, voter = BuildId(Clean(f[2]), Clean(f[3])), nil
-    for voter in string.gfind(f[4], "[^,]+") do voter = Clean(voter); if voter ~= "" then SetVote(id, voter, true) end end
-    RefreshViews()
+    -- Older clients' relays: plain voter names, upvotes only, no timestamp.
+    local id, voter, changed = BuildId(Clean(f[2]), Clean(f[3])), nil, false
+    for voter in string.gfind(f[4], "[^,]+") do if SetVote(id, Clean(voter), true, 0) then changed = true end end
+    if changed then RefreshViews() end
+  elseif kind == "X" and f[4] then
+    local id, item, changed, off, voter, ts, _ = BuildId(Clean(f[2]), Clean(f[3])), nil, false, nil, nil, nil, nil
+    for item in string.gfind(f[4], "[^,]+") do
+      _, _, off, voter, ts = string.find(item, "^(!?)([^%.]+)%.(.+)$")
+      if voter and SetVote(id, Clean(voter), off == "", Dec(ts)) then changed = true end
+    end
+    if changed then RefreshViews() end
   elseif kind == "Q" then
     After(1 + math.random() * 3, "announce", AnnounceAllOwn)
     if GetTime() - lastRelay >= RELAY_COOLDOWN and CountKeys(DB().builds) > 0 then

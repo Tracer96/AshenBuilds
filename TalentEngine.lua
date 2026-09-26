@@ -179,3 +179,93 @@ function AB:GetDerivedStats(build)
   if out.mainSkill and m.twoHandSkill and string.find(out.mainSkill.type or "","TwoHand",1,true) then out.mainSkill.total=out.mainSkill.total+m.twoHandSkill; out.mainSkill.talent=m.twoHandSkill end
   return out
 end
+
+-- Talents in build codes (AB3). An AB3 code is the AB2 gear code followed by
+-- one token per talent tree. Each character packs two talents' ranks (0-5) as
+-- first*6+second, and trailing all-zero characters are trimmed, so a full
+-- build adds about 30 characters and still fits in one chat message.
+local function encodeTree(build,data,tree)
+  local out,i,a,b="",nil,nil,nil
+  for i=1,table.getn(data[tree] or {}),2 do
+    a=AB:GetTalentRank(build,tree,i); b=AB:GetTalentRank(build,tree,i+1)
+    out=out..AB.EncodeNumber(a*6+b)
+  end
+  out=string.gsub(out,"0+$","")
+  if out=="" then out="0" end
+  return out
+end
+
+local function decodeTree(token,points,tree)
+  local k,v
+  for k=1,string.len(token) do
+    v=AB.DecodeNumber(string.sub(token,k,k))
+    if not v or v>35 then return false end
+    if math.floor(v/6)>0 then points[AB:GetTalentKey(tree,k*2-1)]=math.floor(v/6) end
+    if math.mod(v,6)>0 then points[AB:GetTalentKey(tree,k*2)]=math.mod(v,6) end
+  end
+  return true
+end
+
+-- Checks a finished allocation the way the talent UI would have built it:
+-- known talents only, ranks within max, enough points in lower rows, maxed
+-- prerequisites, and no more points than the level allows.
+function AB:ValidateTalents(build)
+  local points=ensureTalents(build); local data=self:GetTalentData(build.class)
+  local key,rank,tree,index,talent,below,i,other,_
+  for key,rank in pairs(points) do
+    _,_,tree,index=string.find(key,"^(%d+):(%d+)$"); tree=tonumber(tree); index=tonumber(index)
+    talent=data and tree and data[tree] and data[tree][index]
+    if not talent then return false,"unknown talent "..key end
+    rank=tonumber(rank) or 0
+    if rank<1 or rank>table.getn(talent.ranks or {}) then return false,talent.name.." has too many ranks" end
+    below=0
+    for i=1,table.getn(data[tree]) do
+      other=data[tree][i]
+      if (tonumber(other.row) or 1)<(tonumber(talent.row) or 1) then below=below+self:GetTalentRank(build,tree,i) end
+    end
+    if below<((tonumber(talent.row) or 1)-1)*5 then return false,talent.name.." needs more points in earlier rows" end
+    if talent.req then
+      other=data[tree][tonumber(talent.req)]
+      if not other or self:GetTalentRank(build,tree,tonumber(talent.req))<table.getn(other.ranks or {}) then return false,talent.name.." is missing its prerequisite" end
+    end
+  end
+  if self:GetTalentPointsSpent(build)>self:GetTalentBudget(build) then return false,"more talent points than level "..self:GetBuildLevel(build).." allows" end
+  return true
+end
+
+-- "31/20/0"-style point split, used by the community list.
+function AB:GetTalentSplit(build)
+  return self:GetTalentPointsInTree(build,1).."/"..self:GetTalentPointsInTree(build,2).."/"..self:GetTalentPointsInTree(build,3)
+end
+
+local baseExport=AB.ExportBuild
+function AB:ExportBuild(build)
+  build=build or self.current
+  local code=baseExport(self,build)
+  local data=self:GetTalentData(build.class)
+  if not data then return code end
+  return "AB3."..string.sub(code,5).."."..encodeTree(build,data,1).."."..encodeTree(build,data,2).."."..encodeTree(build,data,3)
+end
+
+local baseDecode=AB.DecodeBuild
+function AB:DecodeBuild(code)
+  if type(code)~="string" or string.sub(code,1,4)~="AB3." then
+    local build,err=baseDecode(self,code)
+    if build then ensureTalents(build) end
+    return build,err
+  end
+  local tokens={}; local token
+  for token in string.gfind(code,"[^%.]+") do table.insert(tokens,token) end
+  local n=table.getn(tokens)
+  if n<8 then return nil,"Incomplete build code." end
+  local build,err=baseDecode(self,"AB2."..table.concat(tokens,".",2,n-3))
+  if not build then return nil,err end
+  local points={}; local tree
+  for tree=1,3 do
+    if not decodeTree(tokens[n-3+tree],points,tree) then return nil,"Invalid talents in build code." end
+  end
+  build.talents={points=points}
+  local ok,why=self:ValidateTalents(build)
+  if not ok then return nil,"Invalid talents in build code ("..why..")." end
+  return build
+end
