@@ -8,8 +8,8 @@ local AB = AshenBuilds
 --  * prerequisite arrows join a talent to the one it unlocks;
 --  * ranks sit in a small badge, icons glow on hover and clicks make a sound.
 
-local ICON, COL_STEP, ROW_STEP, LEFT, TOP = 44, 70, 74, 27, -60
-local PANEL_W, PANEL_H = 310, 590
+local ICON, COL_STEP, ROW_STEP, LEFT, TOP = 44, 70, 70, 27, -58
+local PANEL_W, PANEL_H = 310, 556
 
 -- The game's talent background art for every class, per tree.
 local TREE_ART = {
@@ -25,7 +25,10 @@ local TREE_ART = {
 }
 -- The art comes in four pieces that together make a 320x384 picture.
 local ART_PIECES = {{"TopLeft", 0, 0, 256, 256}, {"TopRight", 256, 0, 64, 256}, {"BottomLeft", 0, 256, 256, 128}, {"BottomRight", 256, 256, 64, 128}}
-local ART_W, ART_H = 320, 384
+-- The bottom pieces are 128 tall but only the top ~76 rows are painted, so the
+-- picture itself is 320x332; sizing to 384 left a black band at the bottom.
+local ART_W, ART_H = 320, 332
+local MAX_STRETCH = 1.15  -- allow a little vertical stretch instead of cropping the sides away
 
 local GOLD, GREEN, GREY = {1, 0.82, 0}, {0.25, 1, 0.25}, {0.5, 0.5, 0.5}
 
@@ -45,8 +48,10 @@ local function TalentPos(row, col) return LEFT + (col - 1) * COL_STEP, TOP - (ro
 -- Covers the panel with the tree art, cropping instead of stretching (like the ember background).
 local function PlaceArt(panel, name)
   local w, h = PANEL_W - 8, PANEL_H - 8
-  local scale = math.max(w / ART_W, h / ART_H)
-  local sw, sh = w / scale, h / scale
+  -- Always fill the full height; crop the sides only as far as needed after a small stretch.
+  local scaleY = h / ART_H
+  local scaleX = math.max(w / ART_W, scaleY / MAX_STRETCH)
+  local sw, sh = w / scaleX, ART_H
   local sx, sy = (ART_W - sw) * 0.45, 0
   local i, p, tex, x0, x1, y0, y1
   for i = 1, 4 do
@@ -56,8 +61,8 @@ local function PlaceArt(panel, name)
     if x1 - x0 > 0.01 and y1 - y0 > 0.01 then
       tex:SetTexture("Interface\\TalentFrame\\" .. name .. "-" .. p[1])
       tex:ClearAllPoints()
-      tex:SetPoint("TOPLEFT", panel, "TOPLEFT", 4 + (x0 - sx) * scale, -4 - (y0 - sy) * scale)
-      tex:SetWidth((x1 - x0) * scale); tex:SetHeight((y1 - y0) * scale)
+      tex:SetPoint("TOPLEFT", panel, "TOPLEFT", 4 + (x0 - sx) * scaleX, -4 - (y0 - sy) * scaleY)
+      tex:SetWidth((x1 - x0) * scaleX); tex:SetHeight((y1 - y0) * scaleY)
       tex:SetTexCoord((x0 - p[2]) / p[4], (x1 - p[2]) / p[4], (y0 - p[3]) / p[5], (y1 - p[3]) / p[5])
       tex:Show()
     else
@@ -148,7 +153,7 @@ function AB:CreateTalentUI()
 
   local frame = CreateFrame("Frame", "AshenBuildsTalentFrame", UIParent)
   frame:SetWidth(1060)
-  frame:SetHeight(730)
+  frame:SetHeight(696)
   frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   backdrop(frame)
   self:SetupWindow(frame, {fit = true})
