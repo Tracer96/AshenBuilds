@@ -2,7 +2,7 @@
 ## Title: Ashen Builds
 ## Notes: All-class Turtle WoW build planner with embedded AshenDB
 ## Author: The Ashen Banner
-## Version: 0.9.5
+## Version: 0.9.6
 ## SavedVariables: AshenBuildsDB
 Data\AshenDB\Core.lua
 Data\AshenDB\Data\Manifest.lua
@@ -95,6 +95,11 @@ Data\Talents\SHAMAN.lua
 Data\Talents\WARLOCK.lua
 Data\Talents\WARRIOR.lua
 Core.lua
+ItemIndex.lua
+Theme.lua
+Widgets.lua
 TalentEngine.lua
 UI.lua
 TalentUI.lua
+Community.lua
+CommunityUI.lua

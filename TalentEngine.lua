@@ -132,6 +132,8 @@ function AB:GetTalentModifiers(build)
         if string.find(desc,"melee attack power in cat, bear",1,true) then effect("feralAPPct",v,"Feral AP %") end
         if string.find(desc,"spell damage and healing by up to",1,true) and string.find(desc,"of your total spirit",1,true) then effect("spiritToSpellPct",v,"Spirit to spell/healing") end
         if string.find(desc,"all spell damage and healing by",1,true) and string.find(desc,"of your total intellect",1,true) then effect("intToSpellPct",v,"Intellect to spell/healing") end
+        if string.find(desc,"increases your defense skill by",1,true) then effect("defense",v,"defense") end
+        if string.find(desc,"block value of your shield by",1,true) and string.find(desc,"%",1,true) then effect("blockValuePct",v,"block value %") end
         if string.find(desc,"skill in all two-handed weapons by",1,true) then effect("twoHandSkill",v,"two-hand skill") end
         if string.find(desc,"skill with swords",1,true) then effect("swordSkill",v,"sword skill") end
         if string.find(desc,"skill with axes",1,true) then effect("axeSkill",v,"axe skill") end
@@ -153,29 +155,4 @@ function AB:GetTalentModifiers(build)
     end
   end
   return m
-end
-
-local oldDerived=AB.GetDerivedStats
-function AB:GetDerivedStats(build)
-  local out=oldDerived(self,build); build=build or self.current
-  local m=self:GetTalentModifiers(build); out.talentModifiers=m
-  local function pct(v,p) return v*(1+(p or 0)/100) end
-  out.str=pct(out.str,m.strPct); out.agi=pct(out.agi,m.agiPct); out.sta=pct(out.sta,m.staPct); out.int=pct(out.int,m.intPct); out.spi=pct(out.spi,m.spiPct)
-  -- Recalculate dependent primary-stat conversions after percentage talents.
-  local className=out.base and out.base.className or build.class; local level=self:GetBuildLevel(build)
-  out.attackPower=self:GetClassAttackPower(className,level,out.str,out.agi)+(out.gear.ap or 0)
-  out.rangedAttackPower=self:GetClassRangedAttackPower(className,level,out.agi)+(out.gear.rap or 0)
-  local data=AshenBuildsStatData or {}; local agiRatio=(data.critPerAgi and data.critPerAgi[className]) or 20; local intRatio=(data.spellCritPerInt and data.spellCritPerInt[className]) or 0
-  out.meleeCrit=((data.baseMeleeCrit and data.baseMeleeCrit[className]) or 0)+(out.agi/agiRatio)+(out.gear.crit or 0)+(m.meleeCrit or 0)+(m.feralCrit or 0)
-  out.rangedCrit=((data.baseMeleeCrit and data.baseMeleeCrit[className]) or 0)+(out.agi/agiRatio)+(out.gear.crit or 0)+(out.gear.rangedCrit or 0)+(m.rangedCrit or 0)
-  out.spellCrit=(out.gear.spellCrit or 0)+(intRatio>0 and out.int/intRatio or 0)+((data.baseSpellCrit and data.baseSpellCrit[className]) or 0)+(m.spellCrit or 0)
-  out.hit=(out.gear.hit or 0)+(m.hit or 0); out.rangedHit=(out.gear.rangedHit or 0)+out.hit+(m.rangedHit or 0); out.spellHit=(out.gear.spellHit or 0)+(m.spellHit or 0)
-  out.dodge=out.dodge+(m.dodge or 0)+(m.feralDodge or 0); out.parry=out.parry+(m.parry or 0); out.block=out.block+(m.block or 0)
-  out.armor=pct(out.armor,(m.armorPct or 0)+(m.moonkinArmorPct or 0)); out.health=pct(out.health,m.healthPct); out.mana=pct(out.mana,m.manaPct)
-  if m.feralAPPct then out.attackPower=pct(out.attackPower,m.feralAPPct) end
-  local spiritBonus=out.spi*((m.spiritToSpellPct or 0)/100); local intBonus=out.int*((m.intToSpellPct or 0)/100)
-  out.spellPower=pct(out.spellPower,m.spellPowerPct)+spiritBonus+intBonus; out.healing=out.healing+spiritBonus+intBonus
-  out.arcanePower=out.spellPower+(out.gear.arcanePower or 0); out.firePower=out.spellPower+(out.gear.firePower or 0); out.frostPower=out.spellPower+(out.gear.frostPower or 0); out.naturePower=out.spellPower+(out.gear.naturePower or 0); out.shadowPower=out.spellPower+(out.gear.shadowPower or 0); out.holyPower=out.spellPower+(out.gear.holyPower or 0)
-  if out.mainSkill and m.twoHandSkill and string.find(out.mainSkill.type or "","TwoHand",1,true) then out.mainSkill.total=out.mainSkill.total+m.twoHandSkill; out.mainSkill.talent=m.twoHandSkill end
-  return out
 end

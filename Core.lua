@@ -1,5 +1,5 @@
 AshenBuilds = AshenBuilds or {}
-AshenBuilds.VERSION = "0.9.4"
+AshenBuilds.VERSION = "0.9.6"
 
 AshenBuilds.SLOTS = {
   "HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET",
@@ -30,7 +30,8 @@ AshenBuilds.STAT_LABELS = {
   mp5="Mana per 5", hp5="Health per 5", fireRes="Fire Resist", frostRes="Frost Resist",
   natureRes="Nature Resist", shadowRes="Shadow Resist", arcaneRes="Arcane Resist",
   swordSkill="Sword Skill", axeSkill="Axe Skill", daggerSkill="Dagger Skill", maceSkill="Mace Skill", fistSkill="Fist Skill", polearmSkill="Polearm Skill", bowSkill="Bow Skill", gunSkill="Gun Skill", crossbowSkill="Crossbow Skill", thrownSkill="Thrown Skill",
-  firePower="Fire Power", frostPower="Frost Power", naturePower="Nature Power", shadowPower="Shadow Power", arcanePower="Arcane Power", holyPower="Holy Power", spellPen="Spell Penetration", armorPen="Armor Penetration", haste="Haste"
+  firePower="Fire Power", frostPower="Frost Power", naturePower="Nature Power", shadowPower="Shadow Power", arcanePower="Arcane Power", holyPower="Holy Power", spellPen="Spell Penetration", armorPen="Armor Penetration", haste="Haste",
+  rangedHit="Ranged Hit", health="Health", mana="Mana", feralAp="Feral Attack Power", blockValue="Block Value"
 }
 AshenBuilds.GEAR_STAT_ORDER = {
   "str","agi","sta","int","spi","armor","ap","rap","spellPower","healing","hit","spellHit","crit","spellCrit",
@@ -87,6 +88,7 @@ local function AB_NewBuild(name)
   }
 end
 AshenBuilds.NewBuildData = AB_NewBuild
+AshenBuilds.Print = function(self,msg) AB_Print(msg) end
 
 function AshenBuilds:InitializeDB()
   if not AshenBuildsDB then AshenBuildsDB = {} end
@@ -94,6 +96,8 @@ function AshenBuilds:InitializeDB()
   if not AshenBuildsDB.current then AshenBuildsDB.current = AB_NewBuild("My First Build") end
   if not AshenBuildsDB.settings then AshenBuildsDB.settings = {scale=1, locked=false} end
   self.current = AshenBuildsDB.current
+  -- Builds from before rename support: link the planner to the saved build with its name.
+  if not self.current.savedName and self.current.name and AshenBuildsDB.builds[self.current.name] then self.current.savedName = self.current.name end
   self:MigrateBuild(self.current)
   local name, build
   for name, build in pairs(AshenBuildsDB.builds) do self:MigrateBuild(build) end
@@ -136,20 +140,54 @@ function AshenBuilds:NormalizeSlot(slot, item)
   return nil
 end
 
+-- Picks the planner slot for an item when the database is browsed across all slots.
+function AshenBuilds:ResolveSlotForItem(item)
+  local s = item and item.slot
+  if not s then return nil end
+  local items = self.current.items
+  if s == "FINGER" then return (items.FINGER1 and not items.FINGER2) and "FINGER2" or "FINGER1" end
+  if s == "TRINKET" then return (items.TRINKET1 and not items.TRINKET2) and "TRINKET2" or "TRINKET1" end
+  if s == "ROBE" then return "CHEST" end
+  if s == "WEAPON" or s == "TWOHAND" or s == "MAINHAND" then return "MAINHAND" end
+  if s == "OFFHAND" or s == "SHIELD" or s == "HOLDABLE" then return "OFFHAND" end
+  if s == "RANGED" or s == "RANGEDRIGHT" or s == "THROWN" or s == "RELIC" then return "RANGED" end
+  if self.SLOT_LABELS[s] then return s end
+  return nil
+end
+
 function AshenBuilds:EquipItem(slot, itemID)
   local item = self:GetItem(itemID)
   if not item then AB_Print("Item not found in the local database.") return end
+  if not slot or slot == "ALL" then slot = self:ResolveSlotForItem(item) end
+  if not slot then AB_Print(item.n .. " can't be equipped in the planner.") return end
+  -- A two-hander frees the off hand; an off-hand item replaces a two-hander.
+  if slot == "MAINHAND" and (item.twoHand or item.slot == "TWOHAND") then self.current.items.OFFHAND = nil; self.current.enchants.OFFHAND = nil end
+  if slot == "OFFHAND" then local mh = self:GetItem(self.current.items.MAINHAND or 0); if mh and (mh.twoHand or mh.slot == "TWOHAND") then self.current.items.MAINHAND = nil; self.current.enchants.MAINHAND = nil end end
   if not self:NormalizeSlot(slot, item) then AB_Print(item.n .. " does not fit " .. self.SLOT_LABELS[slot] .. ".") return end
   self.current.items[slot] = itemID
+  local enchantID = self.current.enchants[slot]
+  if enchantID and not self:IsEnchantAllowed(slot, enchantID, item) then self.current.enchants[slot] = nil end
   self.current.updated = time()
   AshenBuildsDB.current = self.current
   self:RefreshUI()
 end
 
+-- True when the enchant fits this slot and the item currently in it (two-hand only,
+-- shield only and weapon only enchants check the item).
+function AshenBuilds:IsEnchantAllowed(slot, enchantID, item)
+  local e = AshenBuildsEnchants and AshenBuildsEnchants[enchantID]
+  if not e or not e.slots[slot] then return false end
+  if not item then return true end
+  if e.req == "shield" then return item.shield and true or false end
+  if e.req == "twohand" then return (item.twoHand or item.slot == "TWOHAND") and true or false end
+  if e.req == "weapon" then return item.itemClass == 2 end
+  return true
+end
+
 function AshenBuilds:ApplyEnchant(slot, enchantID)
   if enchantID == 0 then self.current.enchants[slot] = nil
-  elseif AshenBuildsEnchants and AshenBuildsEnchants[enchantID] then self.current.enchants[slot] = enchantID
-  else AB_Print("Enchant not found.") return end
+  elseif self:IsEnchantAllowed(slot, enchantID, self:GetItem(self.current.items[slot] or 0)) then self.current.enchants[slot] = enchantID
+  else AB_Print("That enchant can't be applied to this item.") return end
   self.current.updated = time()
   self:RefreshUI()
 end
@@ -167,6 +205,37 @@ local function AddStats(target, stats)
   for stat, value in pairs(stats) do target[stat] = (target[stat] or 0) + value end
 end
 
+-- Equip effects the item export leaves out of the stat table, read once from the tooltip text.
+local EFFECT_STATS = {}
+local EFFECT_PATTERNS = {
+  {"block value of your shield by (%d+)", "blockValue"},
+  {"^Block Value %+(%d+)", "blockValue"},
+  {"^%+(%d+) Block Value", "blockValue"},
+}
+function AshenBuilds:GetItemEffectStats(id)
+  id = tonumber(id)
+  if not id then return nil end
+  if EFFECT_STATS[id] then return EFFECT_STATS[id] end
+  local stats = {}
+  local d = AshenDB and AshenDB.ItemDetails and AshenDB.ItemDetails[id]
+  local effects = d and d[9]
+  local i, j, e, text, value
+  if effects then
+    for i=1,table.getn(effects) do
+      e = effects[i]; text = type(e)=="table" and e[2] or e
+      if type(text) == "string" then
+        for j=1,table.getn(EFFECT_PATTERNS) do
+          local _, _, n = string.find(text, EFFECT_PATTERNS[j][1])
+          value = tonumber(n)
+          if value then stats[EFFECT_PATTERNS[j][2]] = (stats[EFFECT_PATTERNS[j][2]] or 0) + value end
+        end
+      end
+    end
+  end
+  EFFECT_STATS[id] = stats
+  return stats
+end
+
 function AshenBuilds:GetGearTotals(build)
   build = build or self.current
   local totals = {}
@@ -175,7 +244,7 @@ function AshenBuilds:GetGearTotals(build)
     slot = self.SLOTS[i]
     id = build.items[slot]
     item = id and self:GetItem(id)
-    if item then AddStats(totals, item.stats) end
+    if item then AddStats(totals, item.stats); AddStats(totals, self:GetItemEffectStats(id)) end
     enchantID = build.enchants and build.enchants[slot]
     enchant = enchantID and AshenBuildsEnchants and AshenBuildsEnchants[enchantID]
     if enchant then AddStats(totals, enchant.stats) end
@@ -212,7 +281,7 @@ function AshenBuilds:ImportEquipped()
   for i=1,table.getn(self.SLOTS) do
     slot=self.SLOTS[i]; inv=self.INVENTORY_SLOTS[slot]; link=GetInventoryItemLink("player",inv)
     if link then
-      id=tonumber(string.match(link,"item:(%d+)"))
+      local _,_,raw=string.find(link,"item:(%d+)"); id=tonumber(raw)
       if id and self:GetItem(id) then self.current.items[slot]=id; found=found+1 else missing=missing+1 end
     else self.current.items[slot]=nil end
   end
@@ -221,17 +290,61 @@ function AshenBuilds:ImportEquipped()
   AB_Print("Imported "..found.." database items. "..missing.." equipped items are not in the current data pack.")
 end
 
-function AshenBuilds:SaveBuild(name)
-  name = name or self.current.name or "Unnamed Build"; if name == "" then name = "Unnamed Build" end
-  self.current.name=name; self.current.updated=time(); AshenBuildsDB.builds[name]=self:DeepCopy(self.current); AshenBuildsDB.current=self.current
-  AB_Print("Saved |cffffffff"..name.."|r."); self:RefreshBuildList()
+local function AB_CleanName(name)
+  name = string.gsub(tostring(name or ""), "^%s+", "")
+  name = string.gsub(name, "%s+$", "")
+  return name
 end
+AshenBuilds.CleanBuildName = AB_CleanName
+
+-- current.savedName remembers which saved build the planner is editing, so saving under a
+-- new name renames that build instead of creating a copy. saveAs=true always makes a copy.
+function AshenBuilds:SaveBuild(name, saveAs)
+  name = AB_CleanName(name or self.current.name); if name == "" then name = "Unnamed Build" end
+  local old = self.current.savedName
+  if old and AshenBuildsDB.builds[old] and old ~= name and not saveAs then
+    if not self:RenameBuild(old, name) then return false end
+  elseif AshenBuildsDB.builds[name] and name ~= old then
+    AB_Print("A saved build named |cffffffff"..name.."|r already exists. Load it or delete it first, or pick another name.")
+    return false
+  end
+  self.current.name=name; self.current.savedName=name; self.current.updated=time()
+  local copy=self:DeepCopy(self.current); copy.savedName=nil
+  AshenBuildsDB.builds[name]=copy; AshenBuildsDB.current=self.current
+  AB_Print("Saved |cffffffff"..name.."|r."); self:RefreshBuildList(); self:RefreshUI()
+  if self.OnBuildSaved then self:OnBuildSaved(name) end
+  return true
+end
+
+function AshenBuilds:RenameBuild(old, new)
+  new = AB_CleanName(new)
+  local build = AshenBuildsDB.builds[old]
+  if not build then return false end
+  if new == "" then AB_Print("Build names can't be empty.") return false end
+  if new == old then return true end
+  if AshenBuildsDB.builds[new] then AB_Print("A saved build named |cffffffff"..new.."|r already exists.") return false end
+  local wasPublished = self.IsBuildPublished and self:IsBuildPublished(old)
+  if wasPublished then self:UnpublishBuild(old) end
+  AshenBuildsDB.builds[old] = nil
+  build.name = new; build.updated = time()
+  AshenBuildsDB.builds[new] = build
+  if self.current.savedName == old then self.current.savedName = new; self.current.name = new end
+  if wasPublished then self:PublishBuild(new) end
+  AB_Print("Renamed |cffffffff"..old.."|r to |cffffffff"..new.."|r.")
+  self:RefreshBuildList(); self:RefreshUI()
+  return true
+end
+
 function AshenBuilds:LoadBuild(name)
   local build=AshenBuildsDB.builds[name]; if not build then return end
-  self.current=self:DeepCopy(build); self:MigrateBuild(self.current); AshenBuildsDB.current=self.current; self:RefreshUI(); AB_Print("Loaded |cffffffff"..name.."|r.")
+  self.current=self:DeepCopy(build); self.current.name=name; self.current.savedName=name; self:MigrateBuild(self.current); AshenBuildsDB.current=self.current; self:RefreshUI(); AB_Print("Loaded |cffffffff"..name.."|r.")
 end
 function AshenBuilds:DeleteBuild(name)
-  AshenBuildsDB.builds[name]=nil; if self.selectedBuild==name then self.selectedBuild=nil end; self:RefreshBuildList(); AB_Print("Deleted |cffffffff"..name.."|r.")
+  if not AshenBuildsDB.builds[name] then return end
+  if self.OnBuildDeleted then self:OnBuildDeleted(name) end
+  AshenBuildsDB.builds[name]=nil; if self.selectedBuild==name then self.selectedBuild=nil end
+  if self.current.savedName==name then self.current.savedName=nil end
+  self:RefreshBuildList(); AB_Print("Deleted |cffffffff"..name.."|r.")
 end
 function AshenBuilds:DeepCopy(value)
   if type(value)~="table" then return value end
@@ -242,30 +355,42 @@ local AB_CHARS="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_
 local function Enc(n) n=tonumber(n) or 0; if n==0 then return "0" end; local out=""; while n>0 do local r=math.mod(n,64); out=string.sub(AB_CHARS,r+1,r+1)..out; n=math.floor(n/64) end; return out end
 local function Dec(s) local n=0; for i=1,string.len(s) do local p=string.find(AB_CHARS,string.sub(s,i,i),1,true); if not p then return nil end; n=n*64+(p-1) end; return n end
 
-function AshenBuilds:ExportBuild()
-  local parts={"AB2",Enc(AB_IndexOf(self.CLASSES,self.current.class)),Enc(AB_IndexOf(self.RACES,self.current.race)),Enc(self.current.level),Enc(AB_IndexOf(self.SPECS[self.current.class],self.current.spec))}
+AshenBuilds.EncodeNumber=Enc
+AshenBuilds.DecodeNumber=Dec
+
+function AshenBuilds:ExportBuild(build)
+  build=build or self.current
+  local parts={"AB2",Enc(AB_IndexOf(self.CLASSES,build.class)),Enc(AB_IndexOf(self.RACES,build.race)),Enc(build.level),Enc(AB_IndexOf(self.SPECS[build.class],build.spec))}
   local i,slot
-  for i=1,table.getn(self.SLOTS) do slot=self.SLOTS[i]; table.insert(parts,Enc(self.current.items[slot] or 0)); table.insert(parts,Enc((self.current.enchants and self.current.enchants[slot]) or 0)) end
+  for i=1,table.getn(self.SLOTS) do slot=self.SLOTS[i]; table.insert(parts,Enc(build.items[slot] or 0)); table.insert(parts,Enc((build.enchants and build.enchants[slot]) or 0)) end
   return table.concat(parts,".")
 end
 
 function AshenBuilds:ImportBuild(code)
   if not code then AB_Print("Invalid build code.") return false end
   if string.sub(code,1,4)=="AB1." then return self:ImportLegacyBuild(code) end
-  if string.sub(code,1,4)~="AB2." then AB_Print("Invalid build code.") return false end
+  local build,err=self:DecodeBuild(code)
+  if not build then AB_Print(err) return false end
+  self.current=build; AshenBuildsDB.current=build; self:RefreshUI(); AB_Print("Build imported."); return true
+end
+
+-- Parses an AB2 code into a build table without touching the planner.
+-- Returns nil plus a message when the code is malformed.
+function AshenBuilds:DecodeBuild(code)
+  if type(code)~="string" or string.sub(code,1,4)~="AB2." then return nil,"Invalid build code." end
   local tokens={}; for token in string.gfind(code,"[^%.]+") do table.insert(tokens,token) end
   local legacy17={"HEAD","NECK","SHOULDER","BACK","CHEST","WRIST","HANDS","WAIST","LEGS","FEET","FINGER1","FINGER2","TRINKET1","TRINKET2","MAINHAND","OFFHAND","RANGED"}
   local newCount=5+(table.getn(self.SLOTS)*2)
   local legacyCount=5+(table.getn(legacy17)*2)
   local slots=self.SLOTS
   if table.getn(tokens)==legacyCount then slots=legacy17
-  elseif table.getn(tokens)~=newCount then AB_Print("Incomplete build code.") return false end
+  elseif table.getn(tokens)~=newCount then return nil,"Incomplete build code." end
   local build=AB_NewBuild("Imported Build")
-  build.class=self.CLASSES[Dec(tokens[2]) or 1] or "Warrior"; build.race=self.RACES[Dec(tokens[3]) or 1] or "Human"; build.level=Dec(tokens[4]) or 60
+  build.class=self.CLASSES[Dec(tokens[2]) or 1] or "Warrior"; build.race=self.RACES[Dec(tokens[3]) or 1] or "Human"; build.level=AB_ValidLevel(Dec(tokens[4]) or 60)
   build.spec=(self.SPECS[build.class] or {"Custom"})[Dec(tokens[5]) or 1] or "Custom"
   local i,id,enchantID,pos=1,nil,nil,6
   for i=1,table.getn(slots) do id=Dec(tokens[pos]); enchantID=Dec(tokens[pos+1]); if id and self:GetItem(id) then build.items[slots[i]]=id end; if enchantID and enchantID>0 and AshenBuildsEnchants[enchantID] then build.enchants[slots[i]]=enchantID end; pos=pos+2 end
-  self.current=build; AshenBuildsDB.current=build; self:RefreshUI(); AB_Print("Build imported."); return true
+  return build
 end
 
 function AshenBuilds:ImportLegacyBuild(code)
@@ -282,109 +407,71 @@ function AshenBuilds:ImportLegacyBuild(code)
 end
 
 
--- Universal stat engine. Base data is resolved defensively because older
--- SavedVariables and some 1.12 clients can expose localized names or miss a data file.
+-- Universal stat engine. Mirrors how the game server (vmangos) builds the numbers that
+-- BetterCharacterStats reads back from the client:
+--   base stats and base health/mana come from the real per class/race/level tables,
+--   health = base health + first 20 stamina at 1 HP each + every further point at 10 HP,
+--   mana   = base mana + first 20 intellect at 1 mana each + every further point at 15 mana,
+--   crit/dodge per agility are interpolated between the level 1 and level 60 class rates.
 local AB=AshenBuilds
+local RACE_ORDER={"Human","Orc","Dwarf","NightElf","Undead","Tauren","Gnome","Troll"}
+local STAT_KEYS={"str","agi","sta","int","spi"}
 
-local AB_FALLBACK_BASE_STATS = {
-  class60 = {
-    Warrior={str=110,agi=70,sta=100,int=30,spi=45,health=1689,mana=0},
-    Paladin={str=95,agi=55,sta=90,int=65,spi=70,health=1381,mana=1512},
-    Hunter={str=65,agi=105,sta=85,int=55,spi=60,health=1467,mana=1720},
-    Rogue={str=70,agi=120,sta=75,int=30,spi=50,health=1523,mana=0},
-    Priest={str=35,agi=40,sta=55,int=105,spi=110,health=1209,mana=1820},
-    Shaman={str=85,agi=60,sta=85,int=75,spi=85,health=1280,mana=1520},
-    Mage={str=30,agi=40,sta=50,int=120,spi=105,health=1100,mana=1900},
-    Warlock={str=35,agi=40,sta=65,int=105,spi=100,health=1300,mana=1800},
-    Druid={str=60,agi=55,sta=75,int=90,spi=100,health=1250,mana=1650}
-  },
-  class1 = {
-    Warrior={str=20,agi=15,sta=20,int=10,spi=10,health=80,mana=0},
-    Paladin={str=20,agi=10,sta=20,int=15,spi=15,health=68,mana=80},
-    Hunter={str=15,agi=20,sta=20,int=15,spi=15,health=76,mana=85},
-    Rogue={str=15,agi=25,sta=15,int=10,spi=10,health=75,mana=0},
-    Priest={str=10,agi=10,sta=15,int=20,spi=20,health=52,mana=110},
-    Shaman={str=20,agi=15,sta=20,int=20,spi=20,health=70,mana=95},
-    Mage={str=10,agi=10,sta=15,int=25,spi=20,health=45,mana=120},
-    Warlock={str=10,agi=10,sta=20,int=20,spi=20,health=53,mana=110},
-    Druid={str=15,agi=15,sta=20,int=20,spi=20,health=55,mana=100}
-  },
-  raceOffsets = {
-    Human={str=0,agi=0,sta=0,int=0,spi=0}, Dwarf={str=2,agi=-4,sta=3,int=-1,spi=0},
-    NightElf={str=-4,agi=5,sta=-1,int=0,spi=0}, Gnome={str=-5,agi=2,sta=-3,int=4,spi=2},
-    Orc={str=3,agi=-3,sta=2,int=-3,spi=1}, Tauren={str=5,agi=-5,sta=3,int=-3,spi=0},
-    Troll={str=1,agi=2,sta=1,int=-4,spi=0}, Undead={str=-1,agi=-2,sta=1,int=-2,spi=4},
-    HighElf={str=-3,agi=3,sta=-2,int=3,spi=1}, Goblin={str=-3,agi=3,sta=-2,int=2,spi=0}
-  },
-  racialWeaponSkill = {
-    Human={Sword=5,TwoHandSword=5,Mace=5,TwoHandMace=5}, Orc={Axe=5,TwoHandAxe=5},
-    Dwarf={Gun=5}, Troll={Bow=5,Thrown=5}, HighElf={Bow=5}, Goblin={Dagger=5,Mace=5}
-  },
-  critPerAgi = {Warrior=20,Rogue=29,Hunter=53,Paladin=20,Shaman=20,Druid=20,Priest=20,Mage=20,Warlock=20},
-  spellCritPerInt = {Mage=59.5,Warlock=60.6,Priest=59.2,Druid=60,Shaman=59.5,Paladin=54,Hunter=60,Warrior=0,Rogue=0},
-  baseMeleeCrit = {}, baseSpellCrit = {}
-}
-
-local function GetStatData()
-  local data=AshenBuildsBaseStats
-  if type(data)~="table" or type(data.class1)~="table" or type(data.class60)~="table" then
-    return AB_FALLBACK_BASE_STATS
-  end
-  if type(data.raceOffsets)~="table" then data.raceOffsets=AB_FALLBACK_BASE_STATS.raceOffsets end
-  if type(data.racialWeaponSkill)~="table" then data.racialWeaponSkill=AB_FALLBACK_BASE_STATS.racialWeaponSkill end
-  if type(data.critPerAgi)~="table" then data.critPerAgi=AB_FALLBACK_BASE_STATS.critPerAgi end
-  if type(data.spellCritPerInt)~="table" then data.spellCritPerInt=AB_FALLBACK_BASE_STATS.spellCritPerInt end
-  if type(data.baseMeleeCrit)~="table" then data.baseMeleeCrit={} end
-  if type(data.baseSpellCrit)~="table" then data.baseSpellCrit={} end
-  return data
-end
+local function StatData() return AshenBuildsBaseStats or {} end
 
 local function NormalizeClassName(value)
-  local v=tostring(value or "Warrior")
-  local lower=string.lower(v)
-  local i,name
-  for i=1,table.getn(AB.CLASSES) do
-    name=AB.CLASSES[i]
-    if string.lower(name)==lower then return name end
-  end
+  local lower=string.lower(tostring(value or "Warrior"))
+  local i
+  for i=1,table.getn(AB.CLASSES) do if string.lower(AB.CLASSES[i])==lower then return AB.CLASSES[i] end end
   return "Warrior"
 end
 
 local function NormalizeRaceKey(value)
-  local v=tostring(value or "Human")
-  v=string.gsub(v,"%s+","")
+  local v=string.gsub(tostring(value or "Human"),"%s+","")
   if v=="Nightelf" then return "NightElf" end
   if v=="Highelf" then return "HighElf" end
+  if v=="Scourge" then return "Undead" end
   return v
 end
+AB.NormalizeRaceKey=NormalizeRaceKey
 
-local function Add(dst,src)
-  if not src then return end
-  local k,v for k,v in pairs(src) do dst[k]=(dst[k] or 0)+v end
+local function LevelRate(pair,level)
+  if not pair then return 20 end
+  return pair[1]*(60-level)/59+pair[2]*(level-1)/59
 end
 
-local function Lerp(a,b,t) return a + ((b-a)*t) end
+local function HealthFromStamina(sta) if sta<20 then return sta end return 20+(sta-20)*10 end
+local function ManaFromIntellect(int) if int<20 then return int end return 20+(int-20)*15 end
 
 function AB:GetBaseProfile(build)
   build=build or self.current or {}
-  local data=GetStatData()
+  local data=StatData()
   local className=NormalizeClassName(build.class)
   local raceKey=NormalizeRaceKey(build.race)
-  local level=tonumber(build.level) or 60
-  if level<1 then level=1 elseif level>60 then level=60 end
-  local one=(data.class1 and data.class1[className]) or AB_FALLBACK_BASE_STATS.class1[className] or AB_FALLBACK_BASE_STATS.class1.Warrior
-  local sixty=(data.class60 and data.class60[className]) or AB_FALLBACK_BASE_STATS.class60[className] or AB_FALLBACK_BASE_STATS.class60.Warrior
-  local t=(level-1)/59
-  local out={}
-  local fields={"str","agi","sta","int","spi","health","mana"}
+  local level=self.ValidLevel(build.level)
+  local out={className=className,raceKey=raceKey,level=level}
+  local classRows=(data.levelStats and data.levelStats[className]) or {}
+  local row=classRows[raceKey]
+  local offsets=data.raceOffsets or {}
+  local adjust={0,0,0,0,0}
   local i,k
-  for i=1,table.getn(fields) do
-    k=fields[i]
-    out[k]=math.floor(Lerp(tonumber(one[k]) or 0,tonumber(sixty[k]) or 0,t)+0.5)
+  if not row then
+    -- Turtle-only class/race combinations: borrow another race's row for this class and
+    -- shift it by the difference in racial stats.
+    for i=1,table.getn(RACE_ORDER) do
+      if classRows[RACE_ORDER[i]] then
+        row=classRows[RACE_ORDER[i]]
+        local want=offsets[raceKey] or {0,0,0,0,0}; local have=offsets[RACE_ORDER[i]] or {0,0,0,0,0}
+        for k=1,5 do adjust[k]=(want[k] or 0)-(have[k] or 0) end
+        break
+      end
+    end
   end
-  Add(out,(data.raceOffsets and data.raceOffsets[raceKey]) or nil)
-  out.className=className
-  out.raceKey=raceKey
+  local at=(level-1)*5
+  for i=1,5 do out[STAT_KEYS[i]]=((row and row[at+i]) or 0)+adjust[i] end
+  local pools=data.classLevel and data.classLevel[className]
+  out.health=(pools and pools[(level-1)*2+1]) or 0
+  out.mana=(pools and pools[(level-1)*2+2]) or 0
   return out
 end
 
@@ -396,71 +483,132 @@ function AB:GetWeaponInfo(build,slot)
   return {name=item.n,type=wt or (item.shield and "Shield" or "Unknown")}
 end
 
-function AB:GetWeaponSkill(build,slot,gear)
+local SKILL_KEYS={Sword="swordSkill",TwoHandSword="twoHandSwordSkill",Axe="axeSkill",TwoHandAxe="twoHandAxeSkill",Dagger="daggerSkill",Mace="maceSkill",TwoHandMace="twoHandMaceSkill",Fist="fistSkill",Polearm="polearmSkill",Bow="bowSkill",Gun="gunSkill",Crossbow="crossbowSkill",Thrown="thrownSkill"}
+-- Talents such as Sword Specialization name the weapon family, not the one/two-hand split.
+local SKILL_FAMILY={TwoHandSword="swordSkill",TwoHandAxe="axeSkill",TwoHandMace="maceSkill"}
+
+function AB:GetWeaponSkill(build,slot,gear,talents)
   local w=self:GetWeaponInfo(build,slot)
   if not w or w.type=="Shield" or w.type=="Unknown" then return nil end
-  local base=(tonumber(build.level) or 60)*5
-  local data=GetStatData()
-  local raceKey=NormalizeRaceKey(build.race)
-  local racial=(((data.racialWeaponSkill or {})[raceKey] or {})[w.type] or 0)
-  local map={Sword="swordSkill",TwoHandSword="swordSkill",Axe="axeSkill",TwoHandAxe="axeSkill",Dagger="daggerSkill",Mace="maceSkill",TwoHandMace="maceSkill",Fist="fistSkill",Polearm="polearmSkill",Bow="bowSkill",Gun="gunSkill",Crossbow="crossbowSkill",Thrown="thrownSkill"}
-  local gearBonus=gear[map[w.type] or ""] or 0
-  return {type=w.type,base=base,racial=racial,gear=gearBonus,total=base+racial+gearBonus}
+  local level=self.ValidLevel(build.level)
+  local base=level*5
+  local racial=((StatData().racialWeaponSkill or {})[NormalizeRaceKey(build.race)] or {})[w.type] or 0
+  local gearBonus=gear[SKILL_KEYS[w.type] or ""] or 0
+  local talent=0
+  if talents then
+    talent=talents[SKILL_FAMILY[w.type] or SKILL_KEYS[w.type] or ""] or 0
+    if string.find(w.type,"TwoHand",1,true) then talent=talent+(talents.twoHandSkill or 0) end
+  end
+  return {type=w.type,base=base,racial=racial,gear=gearBonus,talent=talent,total=base+racial+gearBonus+talent}
 end
 
 function AB:GetClassAttackPower(class,level,str,agi)
-  if class=="Warrior" then return (3*level)+(2*str)-20
-  elseif class=="Paladin" then return (3*level)+(2*str)-20
-  elseif class=="Rogue" then return (2*level)+str+agi-20
-  elseif class=="Hunter" then return (2*level)+str+agi-20
+  if class=="Warrior" or class=="Paladin" then return (3*level)+(2*str)-20
+  elseif class=="Rogue" or class=="Hunter" then return (2*level)+str+agi-20
   elseif class=="Shaman" then return (2*level)+(2*str)-20
   elseif class=="Druid" then return (2*str)-20
   else return str-10 end
 end
 
 function AB:GetClassRangedAttackPower(class,level,agi)
-  if class=="Hunter" then return (2*level)+agi-10 end
+  if class=="Hunter" then return (2*level)+(2*agi)-10 end
   if class=="Rogue" or class=="Warrior" then return level+agi-10 end
   return agi-10
 end
 
+-- Racial passives that change the character sheet.
+local RACIALS={Human={spiPct=5}, Gnome={intPct=5}, Tauren={healthPct=5}, NightElf={dodge=1}}
+
+local function Pct(value,pct) return value*(1+(pct or 0)/100) end
+
 function AB:GetDerivedStats(build)
   build=build or self.current
+  local data=StatData()
   local gear=self:GetGearTotals(build)
   local base=self:GetBaseProfile(build)
-  local out={gear=gear,base=base,warnings={}}
-  local level=tonumber(build.level) or 60
-  out.str=(base.str or 0)+(gear.str or 0)
-  out.agi=(base.agi or 0)+(gear.agi or 0)
-  out.sta=(base.sta or 0)+(gear.sta or 0)
-  out.int=(base.int or 0)+(gear.int or 0)
-  out.spi=(base.spi or 0)+(gear.spi or 0)
-  out.health=(base.health or 0)+(gear.sta or 0)*10+(gear.health or 0)
-  out.mana=(base.mana or 0)+(gear.int or 0)*15+(gear.mana or 0)
-  out.armor=(gear.armor or 0)+(gear.bonusArmor or 0)
-  local data=GetStatData()
-  local className=NormalizeClassName(build.class)
+  local m=(self.GetTalentModifiers and self:GetTalentModifiers(build)) or {}
+  local className=base.className
+  local level=base.level
+  local racial=RACIALS[base.raceKey] or {}
+  -- Form-only talents (Sharpened Claws, Moonkin Form...) only count for the matching spec.
+  local feral=(className=="Druid" and build.spec=="Feral")
+  local out={gear=gear,base=base,talentModifiers=m,warnings={}}
+
+  local function Primary(key)
+    local v=(base[key] or 0)+(gear[key] or 0)
+    return math.floor(Pct(Pct(v,m[key.."Pct"]),racial[key.."Pct"])+0.5)
+  end
+  out.str=Primary("str"); out.agi=Primary("agi"); out.sta=Primary("sta"); out.int=Primary("int"); out.spi=Primary("spi")
+
+  out.health=math.floor(Pct(Pct(base.health+HealthFromStamina(out.sta)+(gear.health or 0),m.healthPct),racial.healthPct))
+  out.mana=0
+  if base.mana>0 then out.mana=math.floor(Pct(base.mana+ManaFromIntellect(out.int)+(gear.mana or 0),m.manaPct)) end
+
+  -- Talents such as Toughness scale armor from items; each point of agility adds 2 armor.
+  local itemArmor=(gear.armor or 0)+(gear.bonusArmor or 0)
+  if className=="Druid" and build.spec=="Balance" and m.moonkinArmorPct then itemArmor=Pct(itemArmor,m.moonkinArmorPct) end
+  out.armor=math.floor(Pct(itemArmor,m.armorPct)+out.agi*2)
+
   out.attackPower=self:GetClassAttackPower(className,level,out.str,out.agi)+(gear.ap or 0)
-  out.rangedAttackPower=self:GetClassRangedAttackPower(className,level,out.agi)+(gear.rap or 0)
-  local agiRatio=(data.critPerAgi and data.critPerAgi[className]) or 20
-  out.meleeCrit=((data.baseMeleeCrit and data.baseMeleeCrit[className]) or 0)+(out.agi/agiRatio)+(gear.crit or 0)
-  out.rangedCrit=out.meleeCrit+(gear.rangedCrit or 0)
-  local intRatio=(data.spellCritPerInt and data.spellCritPerInt[className]) or 0
-  out.spellCrit=(gear.spellCrit or 0)+(intRatio>0 and out.int/intRatio or 0)+((data.baseSpellCrit and data.baseSpellCrit[className]) or 0)
-  out.hit=gear.hit or 0; out.rangedHit=(gear.rangedHit or 0)+out.hit; out.spellHit=gear.spellHit or 0
-  out.defense=(level*5)+(gear.defense or 0)
-  out.dodge=5+(out.agi/20)+(gear.dodge or 0)
-  out.parry=gear.parry or 0; out.block=gear.block or 0; out.blockValue=(gear.blockValue or 0)+(out.str/20)
-  out.spellPower=gear.spellPower or 0; out.healing=gear.healing or 0
+  if feral then out.attackPower=Pct(out.attackPower+(gear.feralAp or 0),m.feralAPPct) end
+  out.attackPower=math.floor(out.attackPower)
+  out.rangedAttackPower=math.floor(self:GetClassRangedAttackPower(className,level,out.agi)+(gear.ap or 0)+(gear.rap or 0))
+
+  out.mainSkill=self:GetWeaponSkill(build,"MAINHAND",gear,m)
+  out.offSkill=self:GetWeaponSkill(build,"OFFHAND",gear,m)
+  out.rangedSkill=self:GetWeaponSkill(build,"RANGED",gear,m)
+  local maxSkill=level*5
+  local function SkillCrit(skill) if not skill then return 0 end return (skill.total-maxSkill)*0.04 end
+
+  local agiCrit=out.agi/LevelRate(data.critPerAgi and data.critPerAgi[className],level)
+  local baseCrit=(data.baseCrit and data.baseCrit[className]) or 0
+  out.meleeCrit=baseCrit+agiCrit+(gear.crit or 0)+(m.meleeCrit or 0)+SkillCrit(out.mainSkill)
+  if feral then out.meleeCrit=out.meleeCrit+(m.feralCrit or 0) end
+  out.rangedCrit=baseCrit+agiCrit+(gear.crit or 0)+(gear.rangedCrit or 0)+(m.rangedCrit or 0)+SkillCrit(out.rangedSkill)
+  if out.meleeCrit<0 then out.meleeCrit=0 end
+  if out.rangedCrit<0 then out.rangedCrit=0 end
+
+  local sc=data.spellCrit and data.spellCrit[className]
+  out.spellCrit=(gear.spellCrit or 0)+(m.spellCrit or 0)
+  if sc then out.spellCrit=out.spellCrit+sc[1]+out.int/(sc[2]+sc[3]*level) end
+
+  out.hit=(gear.hit or 0)+(m.hit or 0)
+  out.rangedHit=out.hit+(gear.rangedHit or 0)+(m.rangedHit or 0)
+  out.spellHit=(gear.spellHit or 0)+(m.spellHit or 0)
+
+  -- Defense above the level cap adds 0.04% dodge, parry and block per point.
+  out.defense=maxSkill+(gear.defense or 0)+(m.defense or 0)
+  local defBonus=(out.defense-maxSkill)*0.04
+  out.dodge=baseCrit+out.agi/LevelRate(data.dodgePerAgi and data.dodgePerAgi[className],level)+defBonus+(gear.dodge or 0)+(m.dodge or 0)+(racial.dodge or 0)
+  if feral then out.dodge=out.dodge+(m.feralDodge or 0) end
+  if out.dodge<0 then out.dodge=0 end
+  out.parry=(gear.parry or 0)+(m.parry or 0)
+  if data.canParry and data.canParry[className] then out.parry=out.parry+5+defBonus end
+  local shield=self:GetItem(build.items.OFFHAND or 0)
+  out.block=0; out.blockValue=0
+  if shield and shield.shield and data.canBlock and data.canBlock[className] then
+    out.block=5+defBonus+(gear.block or 0)+(m.block or 0)
+    out.blockValue=math.floor(Pct((gear.blockValue or 0)+out.str/20-1,m.blockValuePct))
+    if out.blockValue<0 then out.blockValue=0 end
+  end
+
+  -- Item "healing" already includes +damage and healing, so the talent bonuses add to both.
+  local spiritBonus=out.spi*((m.spiritToSpellPct or 0)/100); local intBonus=out.int*((m.intToSpellPct or 0)/100)
+  out.spellPower=math.floor(Pct(gear.spellPower or 0,m.spellPowerPct)+spiritBonus+intBonus)
+  out.healing=math.floor((gear.healing or 0)+spiritBonus+intBonus)
   out.arcanePower=out.spellPower+(gear.arcanePower or 0); out.firePower=out.spellPower+(gear.firePower or 0)
   out.frostPower=out.spellPower+(gear.frostPower or 0); out.naturePower=out.spellPower+(gear.naturePower or 0)
   out.shadowPower=out.spellPower+(gear.shadowPower or 0); out.holyPower=out.spellPower+(gear.holyPower or 0)
-  out.mp5=gear.mp5 or 0; out.hp5=gear.hp5 or 0; out.haste=gear.haste or 0; out.armorPen=gear.armorPen or 0; out.spellPen=gear.spellPen or 0
-  out.mainSkill=self:GetWeaponSkill(build,"MAINHAND",gear); out.offSkill=self:GetWeaponSkill(build,"OFFHAND",gear); out.rangedSkill=self:GetWeaponSkill(build,"RANGED",gear)
+
+  out.mp5=gear.mp5 or 0
+  out.spiritRegen=0
+  local regen=data.spiritRegen and data.spiritRegen[className]
+  if regen and out.mana>0 then out.spiritRegen=(out.spi/regen[1]+regen[2])*2.5 end
+  out.hp5=gear.hp5 or 0; out.haste=(gear.haste or 0)+(m.haste or 0); out.armorPen=gear.armorPen or 0; out.spellPen=gear.spellPen or 0
   out.resistances={fire=gear.fireRes or 0,frost=gear.frostRes or 0,nature=gear.natureRes or 0,shadow=gear.shadowRes or 0,arcane=gear.arcaneRes or 0}
-  if build.spec=="Custom" then table.insert(out.warnings,"Custom talents are not allocated yet") end
   return out
 end
+
 
 -- Startup is deliberately registered after every calculation method exists.
 local eventFrame=CreateFrame("Frame")
@@ -476,6 +624,7 @@ eventFrame:SetScript("OnEvent",function()
       local arg=split and string.sub(msg,split+1) or ""
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
+      elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)
         if not itemId then
