@@ -359,7 +359,10 @@ end
 function AB:DressModel()
   local m=self.activeModel
   if not m or not self.previewArea:IsShown() then return end
-  local undress=AshenBuildsDB.settings and AshenBuildsDB.settings.modelUndress
+  -- Strip first (unless the player chose to keep their own gear): a one-hand weapon
+  -- goes to whichever hand is free, so with the player's real weapon still in the
+  -- main hand, the planned one-hander would land in the off hand over the shield.
+  local undress=not (AshenBuildsDB.settings and AshenBuildsDB.settings.modelKeepGear)
   if undress and m.Undress then m:Undress() end
   -- Main hand before off hand so a two-hander never clears the off hand afterwards.
   local links,i,id={},nil,nil

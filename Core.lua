@@ -700,8 +700,8 @@ eventFrame:SetScript("OnEvent",function()
       elseif cmd=="model" then
         if arg=="probe" then AshenBuilds:ProbeDressingRoom()
         elseif arg=="undress" then
-          AshenBuildsDB.settings.modelUndress=not AshenBuildsDB.settings.modelUndress
-          AB_Print("Model preview will "..(AshenBuildsDB.settings.modelUndress and "strip the model before" or "no longer strip the model before").." putting gear on.")
+          AshenBuildsDB.settings.modelKeepGear=not AshenBuildsDB.settings.modelKeepGear
+          AB_Print(AshenBuildsDB.settings.modelKeepGear and "Model preview now keeps your own gear in slots the plan leaves empty (one-hand weapons may land in the off hand)." or "Model preview now strips your own gear before putting the planned gear on.")
           AshenBuilds:RefreshModel()
         else
           local a=AshenBuilds.previewArea
