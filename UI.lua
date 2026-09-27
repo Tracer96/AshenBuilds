@@ -368,7 +368,14 @@ function AB:DressModel()
   local links,i,id={},nil,nil
   for i=1,table.getn(VISIBLE_SLOTS) do
     id=self.current.items[VISIBLE_SLOTS[i]]
-    if id and not SkipSlot(VISIBLE_SLOTS[i]) then table.insert(links,"item:"..id..":0:0:0") end
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) then
+      table.insert(links,"item:"..id..":0:0:0")
+      -- The client decides which hand a one-hander goes in. Trying it on twice puts
+      -- it in both hands whether it alternates or fills the free hand first; the
+      -- off-hand item that follows then replaces the off hand, leaving it in the main hand.
+      local item=VISIBLE_SLOTS[i]=="MAINHAND" and self:GetItem(id)
+      if item and item.slot=="WEAPON" then table.insert(links,"item:"..id..":0:0:0") end
+    end
   end
   local ok,err=true,nil
   if DressUpItemLink then ok,err=DressThroughClient(m,links) end
@@ -1258,8 +1265,9 @@ local function ModelFrames()
   return frames
 end
 
-function AB:ProbeDressingRoom()
-  local id = self.current.items.CHEST or self.current.items.HEAD or 16963
+function AB:ProbeDressingRoom(slot)
+  slot = slot and string.upper(slot) or nil
+  local id = (slot and self.current.items[slot]) or self.current.items.CHEST or self.current.items.HEAD or 16963
   local link = "item:" .. id .. ":0:0:0"
   local log, wrapped, i, j = {}, {}, nil, nil
   local frames = ModelFrames()

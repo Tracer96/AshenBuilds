@@ -698,7 +698,7 @@ eventFrame:SetScript("OnEvent",function()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
       elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
       elseif cmd=="model" then
-        if arg=="probe" then AshenBuilds:ProbeDressingRoom()
+        if string.sub(arg,1,5)=="probe" then local w=string.gsub(string.sub(arg,6),"^%s+",""); AshenBuilds:ProbeDressingRoom(w~="" and w or nil)
         elseif arg=="undress" then
           AshenBuildsDB.settings.modelKeepGear=not AshenBuildsDB.settings.modelKeepGear
           AB_Print(AshenBuildsDB.settings.modelKeepGear and "Model preview now keeps your own gear in slots the plan leaves empty (one-hand weapons may land in the off hand)." or "Model preview now strips your own gear before putting the planned gear on.")
