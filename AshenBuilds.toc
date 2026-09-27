@@ -105,4 +105,3 @@ Profanity.lua
 Community.lua
 CommunityUI.lua
 Minimap.lua
-ModelProbe.lua
