@@ -204,26 +204,45 @@ function AB:CreateModelPreview(parent)
   m:SetScript("OnMouseUp",function() this.dragX=nil end)
   m:SetScript("OnUpdate",function()
     if this.dragX then local x=GetCursorPosition(); this.facing=this.facing+(x-this.dragX)*0.015; this.dragX=x; this:SetFacing(this.facing) end
+    -- Dressing waits for the model SetUnit started loading; see RefreshModel.
+    if this.dressAt and GetTime()>=this.dressAt[1] then table.remove(this.dressAt,1); if table.getn(this.dressAt)==0 then this.dressAt=nil end; AB:DressModel() end
   end)
   m:SetScript("OnMouseWheel",function() this.zoom=math.max(0,math.min(2.5,this.zoom+arg1*0.25)); this:SetPosition(this.zoom,0,0) end)
   m.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); m.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); m.note:SetWidth(490)
   local d=AB.THEME.dim; m.note:SetTextColor(d[1]+.2,d[2]+.2,d[3]+.2); m.note:Hide()
 end
 
+-- SetUnit loads the character model over the next frame or two, and anything
+-- tried on before it finishes is lost with the old model. So load first and
+-- dress a moment later, then once more in case the model was slow.
 function AB:RefreshModel()
   local m=self.previewModel
   if not m or not m:IsShown() then return end
-  m:SetUnit("player"); if m.Undress then m:Undress() end
+  m:SetUnit("player")
+  m.dressAt={GetTime()+0.1,GetTime()+0.6}
   local missing,slot,id=0,nil,nil
-  for slot,id in pairs(self.current.items or {}) do
-    if GetItemInfo(id) then m:TryOn("item:"..id..":0:0:0") else missing=missing+1 end
-  end
-  m:SetFacing(m.facing); m:SetPosition(m.zoom,0,0)
+  for slot,id in pairs(self.current.items or {}) do if not GetItemInfo(id) then missing=missing+1 end end
   local notes={"Drag to turn, scroll to zoom."}
   local myRace=UnitRace("player")
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
   if missing>0 then table.insert(notes,missing.." item"..(missing==1 and "" or "s").." not in your game cache yet - see "..(missing==1 and "it" or "them").." once in game to preview.") end
   m.note:SetText(table.concat(notes,"  "))
+end
+
+-- Strips the model and puts the planned gear on it. Uses the item string from
+-- GetItemInfo, the same form the Dressing Room passes to TryOn.
+function AB:DressModel()
+  local m=self.previewModel
+  if not m or not m:IsShown() then return end
+  if m.Undress then m:Undress() end
+  local worn,slot,i,id,link,_=0,nil,nil,nil,nil,nil
+  -- Main hand before off hand so a two-hander never clears the off hand afterwards.
+  for i=1,table.getn(self.SLOTS) do
+    slot=self.SLOTS[i]; id=self.current.items[slot]
+    if id then _,link=GetItemInfo(id); if link then m:TryOn(link); worn=worn+1 end end
+  end
+  m:SetFacing(m.facing); m:SetPosition(m.zoom,0,0)
+  m.worn=worn
 end
 
 function AB:SetStatsView(view)

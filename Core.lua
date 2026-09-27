@@ -697,6 +697,9 @@ eventFrame:SetScript("OnEvent",function()
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
       elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
+      elseif cmd=="model" then
+        local m=AshenBuilds.previewModel
+        AB_Print("Model preview: "..((m and m:IsShown()) and "open" or "closed")..", items put on last time: "..((m and m.worn) or 0)..".")
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)
