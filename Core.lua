@@ -698,7 +698,8 @@ eventFrame:SetScript("OnEvent",function()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
       elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
       elseif cmd=="model" then
-        if arg=="undress" then
+        if arg=="probe" then AshenBuilds:ProbeDressingRoom()
+        elseif arg=="undress" then
           AshenBuildsDB.settings.modelUndress=not AshenBuildsDB.settings.modelUndress
           AB_Print("Model preview will "..(AshenBuildsDB.settings.modelUndress and "strip the model before" or "no longer strip the model before").." putting gear on.")
           AshenBuilds:RefreshModel()
