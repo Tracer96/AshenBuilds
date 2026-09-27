@@ -204,6 +204,14 @@ end
 -- Slots that change how the model looks.
 local VISIBLE_SLOTS={"HEAD","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET","MAINHAND","OFFHAND","RANGED"}
 local MODEL_SCRIPTS={"OnMouseDown","OnMouseUp","OnMouseWheel","OnUpdate"}
+-- The model holds either its melee weapons or its ranged weapon: trying on a bow
+-- replaces the main and off hand. Melee is shown by default; the toggle swaps.
+local function ShowRanged() return AshenBuildsDB.settings and AshenBuildsDB.settings.modelRanged end
+local function SkipSlot(slot)
+  if slot=="RANGED" then return not ShowRanged() end
+  if slot=="MAINHAND" or slot=="OFFHAND" then return ShowRanged() end
+  return false
+end
 
 local function ModelScripts(m)
   m:EnableMouse(true); m:EnableMouseWheel(true)
@@ -223,7 +231,14 @@ function AB:CreateModelPreview(parent)
   area:SetPoint("TOPLEFT",parent,"TOPLEFT",8,-32); area:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-8,30); area:Hide()
   area.facing=0; area.zoom=0
   local own=CreateFrame("DressUpModel","AshenBuildsPreviewModel",area); own:SetAllPoints(area); own:Hide(); ModelScripts(own); self.ownModel=own
-  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); area.note:SetWidth(490)
+  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); area.note:SetWidth(360)
+  local weapons=MakeButton(parent,"",110,20); self:SkinQuietButton(weapons); weapons:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-10,6); weapons:Hide(); area.weaponToggle=weapons
+  weapons:SetScript("OnClick",function()
+    AshenBuildsDB.settings.modelRanged=not AshenBuildsDB.settings.modelRanged
+    AB:UpdateWeaponToggle(); AB:RefreshModel()
+  end)
+  weapons:SetScript("OnEnter",function() GameTooltip:SetOwner(this,"ANCHOR_TOP"); GameTooltip:SetText("The model holds either its melee weapons or its ranged weapon.",1,1,1,1,true); GameTooltip:Show() end)
+  weapons:SetScript("OnLeave",function() GameTooltip:Hide() end)
   local d=AB.THEME.dim; area.note:SetTextColor(d[1]+.2,d[2]+.2,d[3]+.2); area.note:Hide()
   -- Always give the Dressing Room its model back.
   local oldHide=self.frame:GetScript("OnHide"); self.frame:SetScript("OnHide",function() AB:ReturnModel(); if oldHide then oldHide() end end)
@@ -276,7 +291,7 @@ function AB:RefreshModel()
   m:SetUnit("player")
   area.dressAt={GetTime()+0.1,GetTime()+0.6}
   local missing,i,id=0,nil,nil
-  for i=1,table.getn(VISIBLE_SLOTS) do id=self.current.items[VISIBLE_SLOTS[i]]; if id and not GetItemInfo(id) then missing=missing+1 end end
+  for i=1,table.getn(VISIBLE_SLOTS) do id=self.current.items[VISIBLE_SLOTS[i]]; if id and not SkipSlot(VISIBLE_SLOTS[i]) and not GetItemInfo(id) then missing=missing+1 end end
   local notes={"Drag to turn, scroll to zoom."}
   local myRace=UnitRace("player")
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
@@ -312,7 +327,7 @@ function AB:DressModel()
   local links,i,id={},nil,nil
   for i=1,table.getn(VISIBLE_SLOTS) do
     id=self.current.items[VISIBLE_SLOTS[i]]
-    if id then table.insert(links,"item:"..id..":0:0:0") end
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) then table.insert(links,"item:"..id..":0:0:0") end
   end
   local ok,err=true,nil
   if DressUpItemLink then ok,err=DressThroughClient(m,links) end
@@ -325,13 +340,17 @@ function AB:DressModel()
   self.previewArea.worn=table.getn(links)
 end
 
+function AB:UpdateWeaponToggle()
+  self.previewArea.weaponToggle:SetText(ShowRanged() and "Show Melee" or "Show Ranged")
+end
+
 function AB:SetStatsView(view)
   self.statsView=view
   local totals=view~="preview"
   if totals then
-    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea:Hide(); self.previewArea.note:Hide()
+    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea:Hide(); self.previewArea.note:Hide(); self.previewArea.weaponToggle:Hide()
   else
-    self.statsCards:Hide(); self.previewArea:Show(); self.previewArea.note:Show()
+    self.statsCards:Hide(); self.previewArea:Show(); self.previewArea.note:Show(); self:UpdateWeaponToggle(); self.previewArea.weaponToggle:Show()
   end
   local on,off=self.totalsTab,self.previewTab
   if not totals then on,off=off,on end
