@@ -120,11 +120,11 @@ function AB:CreateCommunityUI()
   if self.communityFrame then return end
   local f = CreateFrame("Frame", "AshenBuildsCommunity", UIParent)
   f:SetWidth(760); f:SetHeight(580); f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-  f:SetBackdrop({bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 24, insets = {left = 8, right = 8, top = 8, bottom = 8}})
+  AB:WindowBackdrop(f)
   self:SetupWindow(f, {fit = true, wheel = function() AB:ScrollCommunityPage(arg1) end})
   f:Hide(); self.communityFrame = f
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.4); self:AddEmberHeader(f, 34); self:AddEmberWell(f, 22, -80, -22, 48)
-  f:SetScript("OnShow", function() AB:FitToScreen(this); AB:FocusWindow(this); AB:RefreshCommunityList() end)
+  f:SetScript("OnShow", function() AB:FitToScreen(this); AB:FocusWindow(this); AB:FadeIn(this); AB:UpdateModelMouse(); AB:RefreshCommunityList() end)
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("COMMUNITY BUILDS")
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)

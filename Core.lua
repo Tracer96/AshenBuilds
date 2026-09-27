@@ -630,6 +630,54 @@ function AB:GetDerivedStats(build)
   if regen and out.mana>0 then out.spiritRegen=(out.spi/regen[1]+regen[2])*2.5 end
   out.hp5=gear.hp5 or 0; out.haste=(gear.haste or 0)+(m.haste or 0); out.armorPen=gear.armorPen or 0; out.spellPen=gear.spellPen or 0
   out.resistances={fire=gear.fireRes or 0,frost=gear.frostRes or 0,nature=gear.natureRes or 0,shadow=gear.shadowRes or 0,arcane=gear.arcaneRes or 0}
+
+  -- Where each total comes from, for the stat tooltips: {label, value, isPercent}.
+  -- Lines worth 0 are dropped so every tooltip only lists real contributions.
+  local ex={}
+  local function Explain(key,lines)
+    local kept={}; local i
+    for i=1,table.getn(lines) do if lines[i][2] and lines[i][2]~=0 then table.insert(kept,lines[i]) end end
+    ex[key]=kept
+  end
+  local function PrimaryLines(key)
+    local lines={{"Base ("..base.raceKey.." "..className..")",base[key]},{"Gear and enchants",gear[key] or 0}}
+    if m[key.."Pct"] then table.insert(lines,{"Talents +"..m[key.."Pct"].."%",out[key]-math.floor(Pct((base[key] or 0)+(gear[key] or 0),racial[key.."Pct"])+0.5)}) end
+    if racial[key.."Pct"] then table.insert(lines,{"Racial +"..racial[key.."Pct"].."%",out[key]-math.floor(Pct((base[key] or 0)+(gear[key] or 0),m[key.."Pct"])+0.5)}) end
+    Explain(key,lines)
+  end
+  PrimaryLines("str"); PrimaryLines("agi"); PrimaryLines("sta"); PrimaryLines("int"); PrimaryLines("spi")
+  local hpBefore=base.health+HealthFromStamina(out.sta)+(gear.health or 0)
+  Explain("health",{{"Base health (level "..level..")",base.health},{"Stamina "..out.sta.." (1 each for 20, then 10)",HealthFromStamina(out.sta)},{"Gear and enchants",gear.health or 0},
+    {"Talents and racials",out.health-hpBefore}})
+  if out.mana>0 then Explain("mana",{{"Base mana (level "..level..")",base.mana},{"Intellect "..out.int.." (1 each for 20, then 15)",ManaFromIntellect(out.int)},{"Gear and enchants",gear.mana or 0},
+    {"Talents",out.mana-(base.mana+ManaFromIntellect(out.int)+(gear.mana or 0))}}) end
+  Explain("armor",{{"Items and enchants",itemArmor},{"Talents",math.floor(Pct(itemArmor,m.armorPct))-math.floor(itemArmor)},{"Agility x2",out.agi*2}})
+  local classAP=self:GetClassAttackPower(className,level,out.str,out.agi)
+  Explain("attackPower",{{"Level, Strength and Agility ("..className..")",classAP},{"Gear and enchants",gear.ap or 0},{"Feral bonuses",out.attackPower-classAP-(gear.ap or 0)}})
+  local classRAP=self:GetClassRangedAttackPower(className,level,out.agi)
+  Explain("rangedAttackPower",{{"Level and Agility ("..className..")",classRAP},{"Gear and enchants",(gear.ap or 0)+(gear.rap or 0)}})
+  Explain("meleeCrit",{{"Class base",baseCrit,true},{"Agility "..out.agi,agiCrit,true},{"Gear and enchants",gear.crit or 0,true},{"Talents",(m.meleeCrit or 0)+(feral and m.feralCrit or 0),true},{"Weapon skill",SkillCrit(out.mainSkill),true}})
+  Explain("rangedCrit",{{"Class base",baseCrit,true},{"Agility "..out.agi,agiCrit,true},{"Gear and enchants",(gear.crit or 0)+(gear.rangedCrit or 0),true},{"Talents",m.rangedCrit or 0,true},{"Weapon skill",SkillCrit(out.rangedSkill),true}})
+  Explain("hit",{{"Gear and enchants",gear.hit or 0,true},{"Talents",m.hit or 0,true}})
+  Explain("rangedHit",{{"Gear and enchants",(gear.hit or 0)+(gear.rangedHit or 0),true},{"Talents",(m.hit or 0)+(m.rangedHit or 0),true}})
+  if sc then Explain("spellCrit",{{"Class base",sc[1],true},{"Intellect "..out.int,out.int/(sc[2]+sc[3]*level),true},{"Gear and enchants",gear.spellCrit or 0,true},{"Talents",m.spellCrit or 0,true}})
+  else Explain("spellCrit",{{"Gear and enchants",gear.spellCrit or 0,true},{"Talents",m.spellCrit or 0,true}}) end
+  Explain("spellHit",{{"Gear and enchants",gear.spellHit or 0,true},{"Talents",m.spellHit or 0,true}})
+  Explain("spellPower",{{"Gear and enchants",gear.spellPower or 0},{"Talents",out.spellPower-(gear.spellPower or 0)}})
+  Explain("healing",{{"Gear and enchants (includes +damage and healing)",gear.healing or 0},{"Talents",out.healing-(gear.healing or 0)}})
+  Explain("defense",{{"Base (level "..level.." x5)",maxSkill},{"Gear and enchants",gear.defense or 0},{"Talents",m.defense or 0}})
+  Explain("dodge",{{"Class base",baseCrit,true},{"Agility "..out.agi,out.agi/LevelRate(data.dodgePerAgi and data.dodgePerAgi[className],level),true},{"Defense above cap",defBonus,true},
+    {"Gear and enchants",gear.dodge or 0,true},{"Talents",(m.dodge or 0)+(feral and m.feralDodge or 0),true},{"Racial",racial.dodge or 0,true}})
+  if data.canParry and data.canParry[className] then Explain("parry",{{"Base",5,true},{"Defense above cap",defBonus,true},{"Gear and enchants",gear.parry or 0,true},{"Talents",m.parry or 0,true}})
+  else Explain("parry",{{"Gear and enchants",gear.parry or 0,true},{"Talents",m.parry or 0,true}}); out.parryNote=className.."s can't parry" end
+  if out.block>0 then
+    Explain("block",{{"Base (shield)",5,true},{"Defense above cap",defBonus,true},{"Gear and enchants",gear.block or 0,true},{"Talents",m.block or 0,true}})
+    Explain("blockValue",{{"Shield and equip effects",gear.blockValue or 0},{"Strength / 20 - 1",out.str/20-1},{"Talents",out.blockValue-math.floor((gear.blockValue or 0)+out.str/20-1)}})
+  else
+    out.blockNote=(data.canBlock and data.canBlock[className]) and "Equip a shield to block" or (className.."s can't block")
+  end
+  if regen then Explain("spiritRegen",{{"Spirit "..out.spi.." / "..regen[1].." + "..regen[2].." every 2 sec, x2.5",out.spiritRegen}}) end
+  out.explain=ex
   return out
 end
 
@@ -649,6 +697,17 @@ eventFrame:SetScript("OnEvent",function()
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
       elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
+      elseif cmd=="model" then
+        if string.sub(arg,1,5)=="probe" then local w=string.gsub(string.sub(arg,6),"^%s+",""); AshenBuilds:ProbeDressingRoom(w~="" and w or nil)
+        elseif arg=="undress" then
+          AshenBuildsDB.settings.modelKeepGear=not AshenBuildsDB.settings.modelKeepGear
+          AB_Print(AshenBuildsDB.settings.modelKeepGear and "Model preview now keeps your own gear in slots the plan leaves empty (one-hand weapons may land in the off hand)." or "Model preview now strips your own gear before putting the planned gear on.")
+          if AshenBuilds.previewArea then AshenBuilds.previewArea.unitLoaded=false end
+          AshenBuilds:RefreshModel()
+        else
+          local a=AshenBuilds.previewArea
+          AB_Print("Model preview: "..((a and a:IsShown()) and "open" or "closed")..", using "..(AshenBuilds.borrowedModel and "the Dressing Room model" or "its own model")..", items put on last time: "..((a and a.worn) or 0)..((a and a.lastLink) and (" (e.g. "..a.lastLink..")") or "")..".")
+        end
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)

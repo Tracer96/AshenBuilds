@@ -124,7 +124,7 @@ end
 ---------------------------------------------------------------------------
 function AB:CreatePromptDialog()
   local f = CreateFrame("Frame", "AshenBuildsPromptDialog", UIParent); f:SetWidth(420); f:SetHeight(160); f:SetPoint("CENTER", UIParent, "CENTER", 0, 80)
-  f:SetBackdrop({bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 32, edgeSize = 24, insets = {left = 8, right = 8, top = 8, bottom = 8}})
+  AB:WindowBackdrop(f)
   self:SetupWindow(f); f:Hide(); self.promptDialog = f
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.5); self:AddEmberHeader(f, 34)
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); f.title:SetPoint("TOP", f, "TOP", 0, -18)

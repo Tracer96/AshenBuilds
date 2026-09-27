@@ -1,7 +1,7 @@
 local AB=AshenBuilds
 local qualityColors={[0]={0.62,0.62,0.62},[1]={1,1,1},[2]={0.12,1,0},[3]={0,0.44,0.87},[4]={0.64,0.21,0.93},[5]={1,0.5,0}}
 local function MakeButton(parent,text,width,height) local b=CreateFrame("Button",nil,parent,"UIPanelButtonTemplate"); b:SetWidth(width or 90); b:SetHeight(height or 22); b:SetText(text); AB:SkinButton(b,"ember"); return b end
-local function MakeBackdrop(frame) frame:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border",tile=true,tileSize=32,edgeSize=24,insets={left=8,right=8,top=8,bottom=8}}) end
+local function MakeBackdrop(frame) AB:WindowBackdrop(frame) end
 -- WoW's screen is only 768 units tall at UI scale 1.0, so the larger windows
 -- shrink to fit on open and stay clamped on-screen while dragged.
 function AB:FitToScreen(frame)
@@ -41,16 +41,17 @@ function AB:SetupWindow(frame,opts)
   frame:SetScript("OnMouseDown",function() AB:FocusWindow(this) end)
   frame:SetScript("OnDragStart",function() AB:FocusWindow(this); this:StartMoving() end)
   frame:SetScript("OnDragStop",function() this:StopMovingOrSizing() end)
-  frame:SetScript("OnShow",function() if opts.fit then AB:FitToScreen(this) end; AB:FocusWindow(this) end)
-  frame:SetScript("OnHide",function() ClearWindowFocus(this); if AB.CloseDropdown then AB.CloseDropdown() end end)
+  frame:SetScript("OnShow",function() if opts.fit then AB:FitToScreen(this) end; AB:FocusWindow(this); AB:FadeIn(this); if AB.UpdateModelMouse then AB:UpdateModelMouse() end end)
+  frame:SetScript("OnHide",function() ClearWindowFocus(this); if AB.CloseDropdown then AB.CloseDropdown() end; if AB.UpdateModelMouse then AB:UpdateModelMouse() end end)
   frame:EnableMouseWheel(true); frame:SetScript("OnMouseWheel",opts.wheel or function() end)
   tinsert(UISpecialFrames,frame:GetName())
 end
 local function Cycle(list,current,delta) local i=AB.IndexOf(list,current)+delta; if i<1 then i=table.getn(list) elseif i>table.getn(list) then i=1 end; return list[i] end
 local function F(n) if not n then return "0" end if math.floor(n)==n then return tostring(n) end return string.format("%.2f",n) end
 local function Section(parent,title,y)
-  local t=parent:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); t:SetPoint("TOPLEFT",parent,"TOPLEFT",12,y); t:SetText(title); t:SetTextColor(1,.82,0)
-  local line=parent:CreateTexture(nil,"ARTWORK"); local d=AB.THEME.divider; line:SetTexture(d[1],d[2],d[3],d[4]); line:SetPoint("TOPLEFT",parent,"TOPLEFT",10,y-13); line:SetWidth(190); line:SetHeight(1)
+  local g=AB.THEME.gold
+  local t=parent:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); t:SetPoint("TOPLEFT",parent,"TOPLEFT",12,y); t:SetText(title); t:SetTextColor(g[1],g[2],g[3])
+  local line=parent:CreateTexture(nil,"ARTWORK"); local d=AB.THEME.divider; line:SetTexture(d[1],d[2],d[3],d[4]); line:SetPoint("TOPLEFT",parent,"TOPLEFT",10,y-13); line:SetPoint("RIGHT",parent,"RIGHT",-10,0); line:SetHeight(1)
 end
 local function StatLine(parent,left,right,y,color)
   local a=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); a:SetPoint("TOPLEFT",parent,"TOPLEFT",14,y); a:SetText(left); a:SetTextColor(.72,.78,.88)
@@ -58,57 +59,104 @@ local function StatLine(parent,left,right,y,color)
   return a,b
 end
 
+-- The game's own empty-slot art, as on the character sheet.
+local EMPTY_ICON={HEAD="Head",NECK="Neck",SHOULDER="Shoulder",BACK="Chest",CHEST="Chest",SHIRT="Shirt",TABARD="Tabard",WRIST="Wrists",HANDS="Hands",WAIST="Waist",LEGS="Legs",FEET="Feet",
+  FINGER1="Finger",FINGER2="Finger",TRINKET1="Trinket",TRINKET2="Trinket",MAINHAND="MainHand",OFFHAND="SecondaryHand",RANGED="Ranged"}
+function AB:EmptySlotIcon(slot) return "Interface\\PaperDoll\\UI-PaperDoll-Slot-"..(EMPTY_ICON[slot] or "Chest") end
+
+-- "+ Enchant" only appears while hovering a slot that could take one.
+local function Over(f)
+  local x,y=GetCursorPosition(); local s=f:GetEffectiveScale(); local l,r,t,bm=f:GetLeft(),f:GetRight(),f:GetTop(),f:GetBottom()
+  if not (x and s and l and r and t and bm) then return false end
+  x,y=x/s,y/s
+  return x>=l and x<=r and y>=bm and y<=t
+end
+local function EnchantHint(b,show)
+  if b.hasEnchant or not b.canEnchant then return end
+  if show then b.enchantText:SetText("+ Enchant"); b.enchantText:SetTextColor(AB.THEME.gold[1],AB.THEME.gold[2],AB.THEME.gold[3]); b.enchantButton:Show()
+  else b.enchantButton:Hide() end
+end
+-- Moving from the slot onto its "+ Enchant" line fires the slot's OnLeave first, so
+-- the hint is only hidden once the mouse is over neither of them for a moment.
+local function HintWatch()
+  local b=this
+  local focus=GetMouseFocus and GetMouseFocus()
+  if GetMouseFocus then
+    if focus==b or focus==b.enchantButton then b.hintHideAt=nil; return end
+  elseif Over(b) then b.hintHideAt=nil; return end
+  if not b.hintHideAt then b.hintHideAt=GetTime()+0.2 end
+  if GetTime()>=b.hintHideAt then b.hintHideAt=nil; b:SetScript("OnUpdate",nil); EnchantHint(b,false) end
+end
+local function WatchHint(b) b.hintHideAt=nil; b:SetScript("OnUpdate",HintWatch) end
+
 function AB:CreateGearSlot(parent,slot,x,y,side)
   local b=CreateFrame("Button",nil,parent); b:SetWidth(155); b:SetHeight(54); b:SetPoint("TOPLEFT",parent,"TOPLEFT",x,y); b.slot=slot
   AB:StylePanel(b,"slot")
-  b.icon=b:CreateTexture(nil,"ARTWORK"); b.icon:SetWidth(42); b.icon:SetHeight(42); b.icon:SetPoint(side=="right" and "RIGHT" or "LEFT",b,side=="right" and "RIGHT" or "LEFT",side=="right" and -5 or 5,0)
-  b.label=b:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); b.label:SetPoint("TOP",b,"TOP",side=="right" and -25 or 25,-6); b.label:SetText(self.SLOT_LABELS[slot]); b.label:SetTextColor(.72,.68,1)
-  b.itemText=b:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); b.itemText:SetPoint("TOP",b.label,"BOTTOM",0,-3); b.itemText:SetWidth(102); b.itemText:SetJustifyH("CENTER")
-  -- The enchant line is its own button so enchanting is one click away.
-  local eb=CreateFrame("Button",nil,b); eb:SetWidth(108); eb:SetHeight(13); eb:SetPoint("TOP",b.itemText,"BOTTOM",0,-1); eb.slot=slot; b.enchantButton=eb
+  b:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+  local hl=b:GetHighlightTexture(); if hl then hl:ClearAllPoints(); hl:SetPoint("TOPLEFT",b,"TOPLEFT",3,-3); hl:SetPoint("BOTTOMRIGHT",b,"BOTTOMRIGHT",-3,3); hl:SetVertexColor(1,.45,.16,.1) end
+  local anchor=side=="right" and "RIGHT" or "LEFT"
+  -- Dark mat behind the icon, the icon itself (edges trimmed), and a quality glow over it.
+  b.iconMat=b:CreateTexture(nil,"BORDER"); b.iconMat:SetTexture(0,0,0,.85); b.iconMat:SetWidth(44); b.iconMat:SetHeight(44); b.iconMat:SetPoint(anchor,b,anchor,side=="right" and -5 or 5,0)
+  b.icon=b:CreateTexture(nil,"ARTWORK"); b.icon:SetWidth(40); b.icon:SetHeight(40); b.icon:SetPoint("CENTER",b.iconMat,"CENTER",0,0)
+  b.glow=b:CreateTexture(nil,"OVERLAY"); b.glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border"); b.glow:SetBlendMode("ADD"); b.glow:SetWidth(74); b.glow:SetHeight(74); b.glow:SetPoint("CENTER",b.iconMat,"CENTER",0,0); b.glow:Hide()
+  local g=AB.THEME.gold
+  b.label=b:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); b.label:SetPoint("TOP",b,"TOP",side=="right" and -25 or 25,-6); b.label:SetText(self.SLOT_LABELS[slot]); b.label:SetTextColor(g[1],g[2],g[3])
+  -- One line only; long names are cut and shown in full in the tooltip.
+  b.itemText=b:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); b.itemText:SetPoint("TOP",b.label,"BOTTOM",0,-3); b.itemText:SetWidth(98); b.itemText:SetHeight(12); b.itemText:SetJustifyH("CENTER")
+  local eb=CreateFrame("Button",nil,b); eb:SetWidth(100); eb:SetHeight(13); eb:SetPoint("TOP",b.itemText,"BOTTOM",0,-2); eb.slot=slot; b.enchantButton=eb
   eb:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
   b.enchantText=eb:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); b.enchantText:SetAllPoints(eb); b.enchantText:SetJustifyH("CENTER")
   eb:SetScript("OnClick",function() AB:OpenEnchantBrowser(this.slot) end)
-  eb:SetScript("OnEnter",function() GameTooltip:SetOwner(this,"ANCHOR_RIGHT"); GameTooltip:SetText("Click to choose an enchant",1,.82,0); GameTooltip:Show() end)
-  eb:SetScript("OnLeave",function() GameTooltip:Hide() end)
-  if not AshenBuildsEnchantSlots[slot] then eb:Hide() end
+  eb:SetScript("OnEnter",function() GameTooltip:SetOwner(this,"ANCHOR_RIGHT"); GameTooltip:SetText(this:GetParent().hasEnchant and "Click to change the enchant" or "Click to choose an enchant",1,.82,0); GameTooltip:Show() end)
+  eb:SetScript("OnLeave",function() GameTooltip:Hide(); WatchHint(this:GetParent()) end)
+  eb:Hide()
   b:RegisterForClicks("LeftButtonUp","RightButtonUp"); b:SetScript("OnClick",function() if arg1=="RightButton" then AB:RemoveItem(this.slot) elseif IsShiftKeyDown() then AB:OpenEnchantBrowser(this.slot) else AB:OpenItemBrowser(this.slot) end end)
-  b:SetScript("OnEnter",function() AB:ShowSlotTooltip(this) end); b:SetScript("OnLeave",function() GameTooltip:Hide() end)
+  b:SetScript("OnEnter",function() AB:ShowSlotTooltip(this); EnchantHint(this,true) end)
+  b:SetScript("OnLeave",function() GameTooltip:Hide(); WatchHint(this) end)
   self.slotButtons[slot]=b
 end
 
+local FRAME_H,SET_FULL,SET_COMPACT=900,148,40
+
 function AB:CreateUI()
   if self.frame then return end
-  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(980); f:SetHeight(900); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.frame=f
+  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(980); f:SetHeight(FRAME_H); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.frame=f
   -- Focus keeps the Ashen sigil centred behind the title, cropping rather than stretching the art.
   self:ApplyEmberBackground(f,10,0.33,0.45,0.30); self:AddEmberHeader(f,116); self:AddEmberFloor(f,44)
   local title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); title:SetPoint("TOP",f,"TOP",0,-16); title:SetText("ASHEN BUILDS  |cff8d96a8v"..self.VERSION.."|r"); title:SetTextColor(1,.45,.16)
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
 
   local nameBox=CreateFrame("EditBox","AshenBuildsNameBox",f,"InputBoxTemplate"); nameBox:SetWidth(220); nameBox:SetHeight(24); nameBox:SetPoint("TOPLEFT",f,"TOPLEFT",24,-48); nameBox:SetAutoFocus(false); self.nameBox=nameBox
-  local save=MakeButton(f,"Save",58,22); save:SetPoint("LEFT",nameBox,"RIGHT",6,0); save:SetScript("OnClick",function() AB:SaveBuild(AB.nameBox:GetText()) end)
-  local saveAs=MakeButton(f,"Save As",70,22); saveAs:SetPoint("LEFT",save,"RIGHT",4,0); saveAs:SetScript("OnClick",function() AB:ShowPrompt({title="SAVE AS NEW BUILD",text="Name for the copy:",edit=true,default=AB.nameBox:GetText(),accept="Save",onAccept=function(text) AB:SaveBuild(text,true) end}) end)
+  -- Save is the one primary action; everything else on this row is a quieter secondary button.
+  local save=MakeButton(f,"Save",64,22); save:SetPoint("LEFT",nameBox,"RIGHT",6,0); save:SetScript("OnClick",function() AB:SaveBuild(AB.nameBox:GetText()) end)
+  local function Quiet(text,w) local b=MakeButton(f,text,w,22); AB:SkinQuietButton(b); return b end
+  local saveAs=Quiet("Save As",70); saveAs:SetPoint("LEFT",save,"RIGHT",4,0); saveAs:SetScript("OnClick",function() AB:ShowPrompt({title="SAVE AS NEW BUILD",text="Name for the copy:",edit=true,default=AB.nameBox:GetText(),accept="Save",onAccept=function(text) AB:SaveBuild(text,true) end}) end)
   nameBox:SetScript("OnEnterPressed",function() this:ClearFocus(); AB:SaveBuild(this:GetText()) end); nameBox:SetScript("OnEscapePressed",function() this:ClearFocus() end)
-  local new=MakeButton(f,"New",58,22); new:SetPoint("LEFT",saveAs,"RIGHT",4,0); new:SetScript("OnClick",function() AB:ConfirmDiscard("a new build",function() AB.current=AB.NewBuildData("New Build"); AshenBuildsDB.current=AB.current; AB.selectedBuild=nil; AB:RefreshUI() end) end)
-  local clear=MakeButton(f,"Clear Gear",82,22); clear:SetPoint("LEFT",new,"RIGHT",4,0); clear:SetScript("OnClick",function() AB.current.items={}; AB.current.enchants={}; AB:RefreshUI() end)
-  local export=MakeButton(f,"Export",62,22); export:SetPoint("LEFT",clear,"RIGHT",4,0); export:SetScript("OnClick",function() AB:ShowCodeDialog("Export Build",AB:ExportBuild(),false) end)
-  local import=MakeButton(f,"Import",62,22); import:SetPoint("LEFT",export,"RIGHT",4,0);
+  local new=Quiet("New",54); new:SetPoint("LEFT",saveAs,"RIGHT",4,0); new:SetScript("OnClick",function() AB:ConfirmDiscard("a new build",function() AB.current=AB.NewBuildData("New Build"); AshenBuildsDB.current=AB.current; AB.selectedBuild=nil; AB:RefreshUI() end) end)
+  local clear=Quiet("Clear Gear",82); clear:SetPoint("LEFT",new,"RIGHT",4,0); clear:SetScript("OnClick",function() AB.current.items={}; AB.current.enchants={}; AB:RefreshUI() end)
+  local export=Quiet("Export",62); export:SetPoint("LEFT",clear,"RIGHT",4,0); export:SetScript("OnClick",function() AB:ShowCodeDialog("Export Build",AB:ExportBuild(),false) end)
+  local import=Quiet("Import",62); import:SetPoint("LEFT",export,"RIGHT",4,0); import:SetScript("OnClick",function() AB:ShowCodeDialog("Import Build","",true) end)
   self.saveStateText=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); self.saveStateText:SetPoint("LEFT",import,"RIGHT",12,0)
   -- The typed name is kept on the build right away, so a refresh never wipes it; Save still decides whether it renames.
-  nameBox:SetScript("OnTextChanged",function() if AB.current then AB.current.name=this:GetText() end end); import:SetScript("OnClick",function() AB:ShowCodeDialog("Import Build","",true) end)
+  nameBox:SetScript("OnTextChanged",function() if AB.current then AB.current.name=this:GetText() end end)
 
+  local g=AB.THEME.gold
   local function Profile(label,x,w,listFn,getFn,setFn)
-    local fs=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); fs:SetPoint("TOPLEFT",f,"TOPLEFT",x,-82); fs:SetText(label)
+    local fs=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); fs:SetPoint("TOPLEFT",f,"TOPLEFT",x,-82); fs:SetText(label); fs:SetTextColor(g[1],g[2],g[3])
     local b=MakeButton(f,"",w,22); AB:SkinButton(b,"cycle"); b:SetPoint("TOPLEFT",f,"TOPLEFT",x,-98); b:RegisterForClicks("LeftButtonUp","RightButtonUp"); b:SetScript("OnClick",function() setFn(Cycle(listFn(),getFn(),arg1=="RightButton" and -1 or 1)) end); return b
   end
   self.classButton=Profile("CLASS",24,105,function() return AB.CLASSES end,function() return AB.current.class end,function(v) AB:SetClass(v) end)
   self.raceButton=Profile("RACE",136,105,function() return AB.RACES end,function() return AB.current.race end,function(v) AB:SetRace(v) end)
   self.specButton=Profile("BUILD",248,125,function() return AB.SPECS[AB.current.class] end,function() return AB.current.spec end,function(v) AB:SetSpec(v) end)
-  local lf=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); lf:SetPoint("TOPLEFT",f,"TOPLEFT",380,-82); lf:SetText("LEVEL")
+  local lf=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); lf:SetPoint("TOPLEFT",f,"TOPLEFT",380,-82); lf:SetText("LEVEL"); lf:SetTextColor(g[1],g[2],g[3])
   local level=CreateFrame("EditBox","AshenBuildsLevelBox",f,"InputBoxTemplate"); level:SetWidth(42); level:SetHeight(22); level:SetPoint("TOPLEFT",f,"TOPLEFT",380,-98); level:SetNumeric(true); level:SetMaxLetters(2); level:SetAutoFocus(false); level:SetScript("OnEnterPressed",function() AB:SetLevel(this:GetText()); this:ClearFocus() end); level:SetScript("OnEditFocusLost",function() AB:SetLevel(this:GetText()) end); self.levelBox=level
-  local browse=MakeButton(f,"ITEM DATABASE",130,25); browse:SetPoint("TOPRIGHT",f,"TOPRIGHT",-28,-86); browse:SetScript("OnClick",function() AB:OpenItemBrowser("ALL") end); self.itemDatabaseButton=browse
-  local saved=MakeButton(f,"SAVED BUILDS",118,25); saved:SetPoint("RIGHT",browse,"LEFT",-8,0); saved:SetScript("OnClick",function() AB:OpenBuildBrowser() end); self.savedBuildsButton=saved
-  local community=MakeButton(f,"COMMUNITY",104,25); community:SetPoint("RIGHT",saved,"LEFT",-8,0); community:SetScript("OnClick",function() AB:OpenCommunity() end); self.communityButton=community
+  -- Tabs (styled and lined up on the header rule by SetupTabs).
+  self.itemDatabaseButton=MakeButton(f,"ITEM DATABASE",118,26); self.itemDatabaseButton:SetScript("OnClick",function() AB:OpenItemBrowser("ALL") end)
+  self.savedBuildsButton=MakeButton(f,"SAVED BUILDS",112,26); self.savedBuildsButton:SetScript("OnClick",function() AB:OpenBuildBrowser() end)
+  self.communityButton=MakeButton(f,"COMMUNITY",104,26); self.communityButton:SetScript("OnClick",function() AB:OpenCommunity() end)
+  self.itemDatabaseButton:SetPoint("BOTTOMRIGHT",f,"TOPRIGHT",-24,-126)
+  self.savedBuildsButton:SetPoint("RIGHT",self.itemDatabaseButton,"LEFT",-3,0)
+  self.communityButton:SetPoint("RIGHT",self.savedBuildsButton,"LEFT",-3,0)
 
   self.slotButtons={}
   local leftSlots={"HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST"}; local rightSlots={"HANDS","WAIST","LEGS","FEET","FINGER1","FINGER2","TRINKET1","TRINKET2"}; local i
@@ -116,31 +164,299 @@ function AB:CreateUI()
   for i=1,table.getn(rightSlots) do self:CreateGearSlot(f,rightSlots[i],775,-140-(i-1)*58,"right") end
 
   local stats=CreateFrame("Frame",nil,f); stats:SetWidth(520); stats:SetHeight(490); stats:SetPoint("TOP",f,"TOP",0,-132); self:StylePanel(stats,"sheer"); self.statsPanel=stats
-  local st=stats:CreateFontString(nil,"OVERLAY","GameFontNormal"); st:SetPoint("TOP",stats,"TOP",0,-10); st:SetText("CHARACTER TOTALS")
+  -- Header switch between the totals and a 3D preview of the gear.
+  local function HeaderTab(text,w,view)
+    local b=CreateFrame("Button",nil,stats); b:SetWidth(w); b:SetHeight(20); b.view=view
+    b.fs=b:CreateFontString(nil,"OVERLAY","GameFontNormal"); b.fs:SetAllPoints(b); b.fs:SetText(text)
+    b.bar=b:CreateTexture(nil,"OVERLAY"); b.bar:SetTexture(1,.45,.16,1); b.bar:SetHeight(2); b.bar:SetPoint("BOTTOMLEFT",b,"BOTTOMLEFT",8,-1); b.bar:SetPoint("BOTTOMRIGHT",b,"BOTTOMRIGHT",-8,-1)
+    b:SetScript("OnClick",function() AB:SetStatsView(this.view) end)
+    return b
+  end
+  self.totalsTab=HeaderTab("CHARACTER TOTALS",160,"totals"); self.totalsTab:SetPoint("TOPRIGHT",stats,"TOP",-4,-6)
+  self.previewTab=HeaderTab("MODEL PREVIEW",140,"preview"); self.previewTab:SetPoint("TOPLEFT",stats,"TOP",4,-6)
+  local sep=stats:CreateFontString(nil,"OVERLAY","GameFontDisable"); sep:SetPoint("TOP",stats,"TOP",0,-8); sep:SetText("|")
+
+  local cards=CreateFrame("Frame",nil,stats); cards:SetAllPoints(stats); self.statsCards=cards
   self.statsColumns={}
   local cardPositions={{10,-34,245,125},{265,-34,245,125},{10,-165,245,170},{265,-165,245,170},{10,-341,245,137},{265,-341,245,137}}
   for i=1,6 do
-    local pos=cardPositions[i]; local c=CreateFrame("Frame",nil,stats); c:SetWidth(pos[3]); c:SetHeight(pos[4]); c:SetPoint("TOPLEFT",stats,"TOPLEFT",pos[1],pos[2]);
+    local pos=cardPositions[i]; local c=CreateFrame("Frame",nil,cards); c:SetWidth(pos[3]); c:SetHeight(pos[4]); c:SetPoint("TOPLEFT",stats,"TOPLEFT",pos[1],pos[2]);
     self:StylePanel(c,"card"); self.statsColumns[i]=c
   end
+  self:CreateModelPreview(stats)
 
   self:CreateGearSlot(f,"MAINHAND",0,0,"left"); self.slotButtons.MAINHAND:ClearAllPoints(); self.slotButtons.MAINHAND:SetPoint("TOPLEFT",stats,"BOTTOMLEFT",17,-10)
   self:CreateGearSlot(f,"OFFHAND",0,0,"left"); self.slotButtons.OFFHAND:ClearAllPoints(); self.slotButtons.OFFHAND:SetPoint("LEFT",self.slotButtons.MAINHAND,"RIGHT",10,0)
   self:CreateGearSlot(f,"RANGED",0,0,"left"); self.slotButtons.RANGED:ClearAllPoints(); self.slotButtons.RANGED:SetPoint("LEFT",self.slotButtons.OFFHAND,"RIGHT",10,0)
 
-  local setPanel=CreateFrame("Frame",nil,f); setPanel:SetWidth(880); setPanel:SetHeight(148); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); self:StylePanel(setPanel,"panel"); self.setPanel=setPanel
-  local sh=setPanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); sh:SetPoint("TOPLEFT",setPanel,"TOPLEFT",12,-9); sh:SetText("SET BONUSES")
+  local setPanel=CreateFrame("Frame",nil,f); setPanel:SetWidth(880); setPanel:SetHeight(SET_FULL); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); self:StylePanel(setPanel,"panel"); self.setPanel=setPanel
+  local sh=setPanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); sh:SetPoint("TOPLEFT",setPanel,"TOPLEFT",12,-9); sh:SetText("SET BONUSES"); sh:SetTextColor(g[1],g[2],g[3])
+  self.setEmptyText=setPanel:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); self.setEmptyText:SetPoint("LEFT",sh,"RIGHT",14,0); self.setEmptyText:SetText("No item set pieces equipped."); self.setEmptyText:SetTextColor(AB.THEME.dim[1],AB.THEME.dim[2],AB.THEME.dim[3])
   local scroll=CreateFrame("ScrollFrame","AshenBuildsSetScrollFrame",setPanel,"UIPanelScrollFrameTemplate"); scroll:SetPoint("TOPLEFT",setPanel,"TOPLEFT",10,-26); scroll:SetPoint("BOTTOMRIGHT",setPanel,"BOTTOMRIGHT",-29,9); self.setScroll=scroll
   local child=CreateFrame("Frame",nil,scroll); child:SetWidth(826); child:SetHeight(105); scroll:SetScrollChild(child); self.setScrollChild=child
   self.setColumnTexts={}
   for i=1,2 do local txt=child:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); txt:SetPoint("TOPLEFT",child,"TOPLEFT",(i-1)*413,0); txt:SetWidth(397); txt:SetJustifyH("LEFT"); txt:SetJustifyV("TOP"); self.setColumnTexts[i]=txt end
   scroll:EnableMouseWheel(true); scroll:SetScript("OnMouseWheel",function() local cur=this:GetVerticalScroll() or 0; local max=this:GetVerticalScrollRange() or 0; cur=cur-(arg1*28); if cur<0 then cur=0 elseif cur>max then cur=max end; this:SetVerticalScroll(cur) end)
 
-  self:CreateBuildBrowser(); self:CreateItemBrowser(); self:CreateSourcePanel(); self:CreateEnchantBrowser(); self:CreateCodeDialog(); self:RefreshUI()
+  self:CreateBuildBrowser(); self:CreateItemBrowser(); self:CreateSourcePanel(); self:CreateEnchantBrowser(); self:CreateCodeDialog()
+  self:SetStatsView("totals"); self:RefreshUI()
+end
+
+---------------------------------------------------------------------------
+-- 3D preview: the player's model wearing the planned gear. Drag to turn,
+-- scroll to zoom.
+--
+-- It borrows the game's own Dressing Room model (DressUpModel) - the frame that
+-- Ctrl-clicking an item uses - and hands it back when the preview closes or the
+-- real Dressing Room opens. If that frame is busy or missing, a model of our own
+-- is used instead. Like the Dressing Room, it only puts items on: slots the
+-- plan leaves empty show what you are wearing (/ab model undress strips first).
+-- The client can only draw the player's race and only items it has cached.
+---------------------------------------------------------------------------
+-- Slots that change how the model looks.
+local VISIBLE_SLOTS={"HEAD","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET","MAINHAND","OFFHAND","RANGED"}
+local MODEL_SCRIPTS={"OnMouseDown","OnMouseUp","OnMouseWheel","OnUpdate","OnEvent"}
+-- The model holds either its melee weapons or its ranged weapon: trying on a bow
+-- replaces the main and off hand. Melee is shown by default; the toggle swaps.
+local function ShowRanged() return AshenBuildsDB.settings and AshenBuildsDB.settings.modelRanged end
+local function SkipSlot(slot)
+  if slot=="RANGED" then return not ShowRanged() end
+  if slot=="MAINHAND" or slot=="OFFHAND" then return ShowRanged() end
+  return false
+end
+
+local function ModelScripts(m)
+  m:EnableMouse(true); m:EnableMouseWheel(true)
+  -- The Dressing Room model reloads the player's real gear on model/inventory events,
+  -- which flashed the preview back to your own gear at random. Ignore them here.
+  m:SetScript("OnEvent",function() end)
+  m:SetScript("OnMouseDown",function() AB.previewArea.dragX=GetCursorPosition() end)
+  m:SetScript("OnMouseUp",function() AB.previewArea.dragX=nil end)
+  m:SetScript("OnMouseWheel",function() local a=AB.previewArea; a.zoom=math.max(0,math.min(2.5,a.zoom+arg1*0.25)); this:SetPosition(a.zoom,0,0) end)
+  m:SetScript("OnUpdate",function()
+    local a=AB.previewArea
+    if a.dragX then local x=GetCursorPosition(); a.facing=a.facing+(x-a.dragX)*0.015; a.dragX=x; this:SetFacing(a.facing) end
+    -- Dressing waits for the model SetUnit started loading; see RefreshModel.
+    if a.dressAt and GetTime()>=a.dressAt[1] then table.remove(a.dressAt,1); if table.getn(a.dressAt)==0 then a.dressAt=nil end; AB:DressModel() end
+    if a.loadUntil and GetTime()>=a.nextCheck then
+      a.nextCheck=GetTime()+0.5
+      local still=AB:MissingPreviewItems()
+      if table.getn(still)<a.waiting then a.waiting=table.getn(still); if a.waiting==0 then a.loadUntil=nil end; AB:DressModel(); AB:UpdatePreviewNote()
+      elseif GetTime()>=a.loadUntil then a.loadUntil=nil; AB:UpdatePreviewNote() end
+    end
+  end)
+end
+
+function AB:CreateModelPreview(parent)
+  local area=CreateFrame("Frame",nil,parent); self.previewArea=area
+  area:SetPoint("TOPLEFT",parent,"TOPLEFT",8,-32); area:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-8,30); area:Hide()
+  area.facing=0; area.zoom=0
+  local own=CreateFrame("DressUpModel","AshenBuildsPreviewModel",area); own:SetAllPoints(area); own:Hide(); ModelScripts(own); self.ownModel=own
+  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOMLEFT",parent,"BOTTOMLEFT",12,10); area.note:SetWidth(370); area.note:SetJustifyH("LEFT")
+  local weapons=MakeButton(parent,"",110,20); self:SkinQuietButton(weapons); weapons:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-10,6); weapons:Hide(); area.weaponToggle=weapons
+  weapons:SetScript("OnClick",function()
+    AshenBuildsDB.settings.modelRanged=not AshenBuildsDB.settings.modelRanged
+    AB:UpdateWeaponToggle(); AB:RefreshModel()
+  end)
+  weapons:SetScript("OnEnter",function() GameTooltip:SetOwner(this,"ANCHOR_TOP"); GameTooltip:SetText("The model holds either its melee weapons or its ranged weapon.",1,1,1,1,true); GameTooltip:Show() end)
+  weapons:SetScript("OnLeave",function() GameTooltip:Hide() end)
+  local d=AB.THEME.dim; area.note:SetTextColor(d[1]+.2,d[2]+.2,d[3]+.2); area.note:Hide()
+  -- Always give the Dressing Room its model back.
+  local oldHide=self.frame:GetScript("OnHide"); self.frame:SetScript("OnHide",function() AB:ReturnModel(); if oldHide then oldHide() end end)
+  if DressUpFrame then
+    local oldShow=DressUpFrame:GetScript("OnShow")
+    DressUpFrame:SetScript("OnShow",function() local was=AB.borrowedModel; AB:ReturnModel(); if oldShow then oldShow() end; if was and AB.previewArea:IsShown() then AB:RefreshModel() end end)
+  end
+end
+
+-- Moves DressUpModel into the preview, remembering everything needed to put it back.
+function AB:BorrowModel()
+  local bm=DressUpModel
+  if self.borrowedModel then return bm end
+  if not bm or not bm.TryOn or not bm.GetParent or (DressUpFrame and DressUpFrame:IsShown()) then return nil end
+  local saved={parent=bm:GetParent(),w=bm:GetWidth(),h=bm:GetHeight(),level=bm:GetFrameLevel(),strata=bm:GetFrameStrata(),shown=bm:IsShown(),points={},scripts={}}
+  local i,p,rel,rp,x,y
+  for i=1,5 do p,rel,rp,x,y=bm:GetPoint(i); if p then table.insert(saved.points,{p,rel,rp,x,y}) end end
+  for i=1,table.getn(MODEL_SCRIPTS) do saved.scripts[MODEL_SCRIPTS[i]]=bm:GetScript(MODEL_SCRIPTS[i]) end
+  saved.mouse=bm.IsMouseEnabled and bm:IsMouseEnabled(); saved.wheel=bm.IsMouseWheelEnabled and bm:IsMouseWheelEnabled()
+  self.borrowedModel=saved
+  bm:SetParent(self.previewArea); bm:ClearAllPoints(); bm:SetAllPoints(self.previewArea)
+  -- Keep it in the planner's layer so the enchant/item windows draw (and click) above it.
+  bm:SetFrameStrata(self.frame:GetFrameStrata()); bm:SetFrameLevel(self.previewArea:GetFrameLevel()+2)
+  ModelScripts(bm); bm:Show()
+  return bm
+end
+
+function AB:ReturnModel()
+  local s=self.borrowedModel; if not s then return end
+  self.borrowedModel=nil
+  local bm=DressUpModel
+  bm:SetParent(s.parent); bm:ClearAllPoints()
+  local i; for i=1,table.getn(s.points) do local p=s.points[i]; bm:SetPoint(p[1],p[2],p[3],p[4],p[5]) end
+  if s.w and s.h then bm:SetWidth(s.w); bm:SetHeight(s.h) end
+  if s.strata then bm:SetFrameStrata(s.strata) end
+  if s.level then bm:SetFrameLevel(s.level) end
+  for i=1,table.getn(MODEL_SCRIPTS) do bm:SetScript(MODEL_SCRIPTS[i],s.scripts[MODEL_SCRIPTS[i]]) end
+  bm:EnableMouse(s.mouse and true or false); if bm.EnableMouseWheel then bm:EnableMouseWheel(s.wheel and true or false) end
+  bm:SetFacing(0); bm:SetPosition(0,0,0)
+  if not s.shown then bm:Hide() end
+  if self.activeModel==bm then self.activeModel=nil end
+  self.previewArea.unitLoaded=false
+end
+
+-- Planned, visible items the client hasn't cached yet (the Dressing Room can't show those).
+function AB:MissingPreviewItems()
+  local out,i,id={},nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=self.current.items[VISIBLE_SLOTS[i]]
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) and not GetItemInfo(id) then table.insert(out,id) end
+  end
+  return out
+end
+
+-- Asks the server for an item the same way hovering an unseen link does.
+local scanTip
+local function RequestItem(id)
+  if not scanTip then scanTip=CreateFrame("GameTooltip","AshenBuildsScanTooltip",UIParent,"GameTooltipTemplate") end
+  scanTip:SetOwner(UIParent,"ANCHOR_NONE"); scanTip:SetHyperlink("item:"..id..":0:0:0"); scanTip:Hide()
+end
+
+-- What the model should be wearing; re-dressing only happens when this changes.
+local function Outfit()
+  local parts,i,id={},nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=AB.current.items[VISIBLE_SLOTS[i]]
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) then table.insert(parts,VISIBLE_SLOTS[i].."="..id) end
+  end
+  local s=AshenBuildsDB.settings or {}
+  table.insert(parts,s.modelKeepGear and "keep" or "strip")
+  return table.concat(parts,";")
+end
+
+-- Keeps the preview smooth:
+--  * the character is loaded (SetUnit) only when the preview gets a model, since
+--    SetUnit shows your real gear until the planned gear goes back on;
+--  * SetUnit loads over the next frame or two, so the first dressing waits a moment
+--    and repeats once in case the model was slow;
+--  * after that, changes re-dress in a single step, and only when the visible gear
+--    actually changed (stat or enchant refreshes leave the model alone);
+--  * items the client hasn't cached are fetched and put on as they arrive.
+function AB:RefreshModel()
+  local area=self.previewArea
+  if not area or not area:IsShown() then return end
+  local m=self:BorrowModel()
+  if m then self.ownModel:Hide() else m=self.ownModel; m:Show() end
+  if self.activeModel~=m then self.activeModel=m; self.previewArea.unitLoaded=false; self:UpdateModelMouse() end
+  if not area.unitLoaded then
+    self.activeModel=m; area.unitLoaded=true; area.outfit=nil
+    m:SetUnit("player")
+    area.dressAt={GetTime()+0.1,GetTime()+0.6}
+  elseif not area.dressAt and area.outfit~=Outfit() then
+    self:DressModel()
+  end
+  local missing=self:MissingPreviewItems()
+  local i
+  if table.getn(missing)>0 and not area.loadUntil and area.requested~=Outfit() then
+    for i=1,table.getn(missing) do RequestItem(missing[i]) end
+    area.requested=Outfit(); area.loadUntil=GetTime()+10; area.nextCheck=GetTime()+0.5; area.waiting=table.getn(missing)
+  end
+  self:UpdatePreviewNote()
+end
+
+function AB:UpdatePreviewNote()
+  local area=self.previewArea
+  local n=table.getn(self:MissingPreviewItems())
+  local notes={"Drag to turn, scroll to zoom."}
+  local myRace=UnitRace("player")
+  if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
+  if n>0 and area.loadUntil then table.insert(notes,"Loading "..n.." item"..(n==1 and "" or "s").." from the server...")
+  elseif n>0 then table.insert(notes,n.." item"..(n==1 and "" or "s").." couldn't be loaded; your own gear shows there.") end
+  area.note:SetText(table.concat(notes,"  "))
+end
+
+-- Puts the planned gear on through the client's own DressUpItemLink.
+-- On this client that routine is not the stock one: it tries the item ID and
+-- then a translated appearance ID for Turtle's custom items (the /ab model
+-- probe showed TryOn(80314) followed by TryOn("47250")), so a plain TryOn
+-- can't dress custom gear. While it runs, DressUpModel points at the preview
+-- model, the Dressing Room window is kept closed and the per-item SetUnit that
+-- would reset the model is skipped; everything is restored afterwards.
+local function DressThroughClient(m,links)
+  local realModel,realShow,realDressUp=DressUpModel,ShowUIPanel,DressUpFrame
+  DressUpModel=m
+  if realShow then ShowUIPanel=function(frame,a2) if frame~=realDressUp then return realShow(frame,a2) end end end
+  m.SetUnit=function() end
+  local i
+  local ok,err=pcall(function() for i=1,table.getn(links) do DressUpItemLink(links[i]) end end)
+  m.SetUnit=nil
+  ShowUIPanel=realShow; DressUpModel=realModel
+  return ok,err
+end
+
+function AB:DressModel()
+  local m=self.activeModel
+  if not m or not self.previewArea:IsShown() then return end
+  -- Strip first (unless the player chose to keep their own gear): a one-hand weapon
+  -- goes to whichever hand is free, so with the player's real weapon still in the
+  -- main hand, the planned one-hander would land in the off hand over the shield.
+  local undress=not (AshenBuildsDB.settings and AshenBuildsDB.settings.modelKeepGear)
+  if undress and m.Undress then m:Undress() end
+  -- Main hand before off hand so a two-hander never clears the off hand afterwards.
+  local links,i,id={},nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=self.current.items[VISIBLE_SLOTS[i]]
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) then
+      table.insert(links,"item:"..id..":0:0:0")
+      -- The client decides which hand a one-hander goes in. Trying it on twice puts
+      -- it in both hands whether it alternates or fills the free hand first; the
+      -- off-hand item that follows then replaces the off hand, leaving it in the main hand.
+      local item=VISIBLE_SLOTS[i]=="MAINHAND" and self:GetItem(id)
+      if item and item.slot=="WEAPON" then table.insert(links,"item:"..id..":0:0:0") end
+    end
+  end
+  local ok,err=true,nil
+  if DressUpItemLink then ok,err=DressThroughClient(m,links) end
+  -- No client routine, or it failed: fall back to trying the item IDs directly.
+  if not DressUpItemLink or not ok then
+    for i=1,table.getn(links) do local _,_,n=string.find(links[i],"item:(%d+)"); m:TryOn(tonumber(n)) end
+  end
+  self.previewArea.lastLink=links[1]; self.previewArea.lastError=err; self.previewArea.outfit=Outfit()
+  m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
+  self.previewArea.worn=table.getn(links)
+end
+
+-- The model takes the mouse for turning and zooming; while any other Ashen Builds
+-- window is open it lets go, so it can never swallow clicks meant for that window.
+function AB:UpdateModelMouse()
+  local m=self.activeModel
+  if not m then return end
+  local blocked,i,w=false,nil,nil
+  for i=1,table.getn(self.windows or {}) do w=self.windows[i]; if w~=self.frame and w:IsShown() then blocked=true end end
+  m:EnableMouse(not blocked); if m.EnableMouseWheel then m:EnableMouseWheel(not blocked) end
+  if blocked then self.previewArea.dragX=nil end
+end
+
+function AB:UpdateWeaponToggle()
+  self.previewArea.weaponToggle:SetText(ShowRanged() and "Show Melee" or "Show Ranged")
+end
+
+function AB:SetStatsView(view)
+  self.statsView=view
+  local totals=view~="preview"
+  if totals then
+    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea.unitLoaded=false; self.previewArea.dressAt=nil; self.previewArea:Hide(); self.previewArea.note:Hide(); self.previewArea.weaponToggle:Hide()
+  else
+    self.statsCards:Hide(); self.previewArea:Show(); self.previewArea.note:Show(); self:UpdateWeaponToggle(); self.previewArea.weaponToggle:Show()
+  end
+  local on,off=self.totalsTab,self.previewTab
+  if not totals then on,off=off,on end
+  on.fs:SetTextColor(1,1,1); on.bar:Show()
+  off.fs:SetTextColor(AB.THEME.gold[1],AB.THEME.gold[2],AB.THEME.gold[3]); off.bar:Hide()
+  if not totals then self:RefreshModel() end
 end
 
 function AB:ShowSlotTooltip(button)
-  local id=self.current.items[button.slot] or 0; if id>0 then self:ShowItemTooltip(button,id); local e=AshenBuildsEnchants[self.current.enchants[button.slot] or 0]; if e then GameTooltip:AddLine(" "); GameTooltip:AddLine("Enchanted: "..e.n,0.1,1,0.1); local sum=self:StatSummary(e.stats); if sum=="" then sum=e.tip or "" end; if sum~="" then GameTooltip:AddLine(sum,0.1,1,0.1,true) end; GameTooltip:Show() end else GameTooltip:SetOwner(button,"ANCHOR_RIGHT"); GameTooltip:SetText(self.SLOT_LABELS[button.slot].." - Empty",.6,.65,.75); GameTooltip:Show() end
+  local id=self.current.items[button.slot] or 0; if id>0 then self:ShowItemTooltip(button,id); local e=AshenBuildsEnchants[self.current.enchants[button.slot] or 0]; if e then GameTooltip:AddLine(" "); GameTooltip:AddLine("Enchanted: "..e.n,0.1,1,0.1); local sum=self:StatSummary(e.stats); if sum=="" then sum=e.tip or "" end; if sum~="" then GameTooltip:AddLine(sum,0.1,1,0.1,true) end; GameTooltip:Show() end else GameTooltip:SetOwner(button,"ANCHOR_RIGHT"); GameTooltip:SetText(self.SLOT_LABELS[button.slot].." - Empty",.6,.65,.75); GameTooltip:AddLine("Click to choose an item",1,1,1); GameTooltip:Show() end
 end
 
 function AB:RefreshUI()
@@ -152,44 +468,103 @@ function AB:RefreshUI()
   end
   self.nameBox:SetText(self.current.name or "New Build"); self.classButton:SetText(self.current.class); self.raceButton:SetText(self.current.race); self.specButton:SetText(self.current.spec); self.levelBox:SetText(self:GetBuildLevel())
   local slot,b,id,item,c,enchant
-  for slot,b in pairs(self.slotButtons) do id=self.current.items[slot]; item=id and self:GetItem(id); enchant=AshenBuildsEnchants[(self.current.enchants and self.current.enchants[slot]) or 0]; if item then b.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText(item.n); c=qualityColors[item.q] or qualityColors[1]; b.itemText:SetTextColor(c[1],c[2],c[3]) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText("Empty"); b.itemText:SetTextColor(AB.THEME.empty[1],AB.THEME.empty[2],AB.THEME.empty[3]) end; b.enchantText:SetText(enchant and enchant.n or (item and "+ Add enchant" or "No enchant")); if enchant then b.enchantText:SetTextColor(.2,1,.2) else b.enchantText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3]) end end
+  local muted=AB.THEME.muted
+  for slot,b in pairs(self.slotButtons) do
+    id=self.current.items[slot]; item=id and self:GetItem(id); enchant=AshenBuildsEnchants[(self.current.enchants and self.current.enchants[slot]) or 0]
+    if item then
+      b.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark"); b.icon:SetTexCoord(.07,.93,.07,.93); b.icon:SetVertexColor(1,1,1)
+      b.itemText:SetText(item.n); c=qualityColors[item.q] or qualityColors[1]; b.itemText:SetTextColor(c[1],c[2],c[3])
+      if (item.q or 1)>=2 then b.glow:SetVertexColor(c[1],c[2],c[3]); b.glow:Show() else b.glow:Hide() end
+    else
+      b.icon:SetTexture(self:EmptySlotIcon(slot)); b.icon:SetTexCoord(0,1,0,1); b.icon:SetVertexColor(.8,.8,.8)
+      b.itemText:SetText("Empty"); b.itemText:SetTextColor(AB.THEME.dim[1],AB.THEME.dim[2],AB.THEME.dim[3]); b.glow:Hide()
+    end
+    b.hasEnchant=enchant and true or false
+    b.canEnchant=item and AshenBuildsEnchantSlots[slot] and true or false
+    if enchant then b.enchantText:SetText(enchant.n); b.enchantText:SetTextColor(.2,1,.2); b.enchantButton:Show() else b.enchantButton:Hide() end
+  end
   self:RefreshStats(); self:RefreshSetBonuses()
+  if self.statsView=="preview" then self:RefreshModel() end
 end
 
 -- Stat lines are pooled per column: refreshing reuses the same font strings
--- instead of creating new ones every time the build changes.
+-- instead of creating new ones every time the build changes. Each line has an
+-- invisible hover area that explains where the number comes from.
 function AB:ClearStatColumns()
   local i,c,j
-  for i=1,6 do c=self.statsColumns[i]; c.used=0; if c.lines then for j=1,table.getn(c.lines) do c.lines[j][1]:Hide(); c.lines[j][2]:Hide() end else c.lines={} end end
+  for i=1,6 do c=self.statsColumns[i]; c.used=0; if c.lines then for j=1,table.getn(c.lines) do c.lines[j][1]:Hide(); c.lines[j][2]:Hide(); c.lines[j][3]:Hide() end else c.lines={} end end
 end
-function AB:PutStat(col,label,value,y,color)
+function AB:PutStat(col,label,value,y,key,isZero)
   local c=self.statsColumns[col]; c.used=c.used+1
   local line=c.lines[c.used]
-  if not line then local a,b=StatLine(c,"","",y); line={a,b}; c.lines[c.used]=line end
-  line[1]:ClearAllPoints(); line[1]:SetPoint("TOPLEFT",c,"TOPLEFT",14,y); line[1]:SetText(label); line[1]:Show()
+  if not line then
+    local a,b=StatLine(c,"","",y)
+    local hit=CreateFrame("Button",nil,c); hit:SetHeight(15)
+    hit:SetScript("OnEnter",function() AB:ShowStatTooltip(this) end); hit:SetScript("OnLeave",function() GameTooltip:Hide() end)
+    line={a,b,hit}; c.lines[c.used]=line
+  end
+  local t=AB.THEME
+  line[1]:ClearAllPoints(); line[1]:SetPoint("TOPLEFT",c,"TOPLEFT",14,y); line[1]:SetText(label)
   line[2]:ClearAllPoints(); line[2]:SetPoint("TOPRIGHT",c,"TOPRIGHT",-14,y); line[2]:SetText(value or "")
-  if color then line[2]:SetTextColor(color[1],color[2],color[3]) else line[2]:SetTextColor(1,1,1) end
-  line[2]:Show()
+  -- Zeroes fade back so the stats that matter for this build stand out.
+  if isZero then line[1]:SetTextColor(t.dim[1],t.dim[2],t.dim[3]); line[2]:SetTextColor(t.dim[1],t.dim[2],t.dim[3])
+  else line[1]:SetTextColor(t.label[1],t.label[2],t.label[3]); line[2]:SetTextColor(1,1,1) end
+  line[3]:ClearAllPoints(); line[3]:SetPoint("TOPLEFT",c,"TOPLEFT",8,y+1); line[3]:SetPoint("RIGHT",c,"RIGHT",-8,0)
+  line[3].key=key; line[3].label=label; line[3].value=value
+  line[1]:Show(); line[2]:Show(); line[3]:Show()
+end
+
+function AB:ShowStatTooltip(hit)
+  local d=self.lastStats; if not d or not hit.key then return end
+  local lines=d.explain and d.explain[hit.key]
+  local note=(hit.key=="parry" and d.parryNote) or ((hit.key=="block" or hit.key=="blockValue") and d.blockNote)
+  if (not lines or table.getn(lines)==0) and not note then return end
+  GameTooltip:SetOwner(hit,"ANCHOR_RIGHT")
+  GameTooltip:SetText(hit.label.."  "..(hit.value or ""),1,.82,.28)
+  local i,l,v
+  for i=1,table.getn(lines or {}) do
+    l=lines[i]; v=l[2]
+    v=(v>0 and "+" or "")..(math.floor(v)==v and tostring(v) or string.format("%.2f",v))..(l[3] and "%" or "")
+    self:AddTooltipDouble(l[1],v,.85,.8,.7,1,1,1)
+  end
+  if note then GameTooltip:AddLine(note,.6,.6,.6,true) end
+  GameTooltip:Show()
 end
 
 local STAT_HEADINGS={"BASE STATS","RESOURCES","MELEE & RANGED","SPELLS & HEALING","DEFENSE","RESISTANCES"}
 function AB:RefreshStats()
   local i
   if not self.statHeadings then self.statHeadings=true; for i=1,6 do Section(self.statsColumns[i],STAT_HEADINGS[i],-8) end end
-  self:ClearStatColumns(); local ok,d=pcall(function() return AB:GetDerivedStats(self.current) end); if not ok or not d then self:PutStat(1,"Calculation error",tostring(d),-34,{1,.2,.2}); return end
+  self:ClearStatColumns(); local ok,d=pcall(function() return AB:GetDerivedStats(self.current) end); if not ok or not d then self:PutStat(1,"Calculation error",tostring(d),-34); return end
+  self.lastStats=d
   local y
-  y=-34; self:PutStat(1,"Strength",F(d.str),y); y=y-16; self:PutStat(1,"Agility",F(d.agi),y); y=y-16; self:PutStat(1,"Stamina",F(d.sta),y); y=y-16; self:PutStat(1,"Intellect",F(d.int),y); y=y-16; self:PutStat(1,"Spirit",F(d.spi),y)
-  y=-34; self:PutStat(2,"Health",F(d.health),y); y=y-17; if d.mana and d.mana>0 then self:PutStat(2,"Mana",F(d.mana),y); y=y-17 end; self:PutStat(2,"Armor",F(d.armor),y); y=y-17; if d.haste and d.haste>0 then self:PutStat(2,"Haste",F(d.haste).."%",y) end
-  y=-34; self:PutStat(3,"Attack Power",F(d.attackPower),y); y=y-16; self:PutStat(3,"Ranged AP",F(d.rangedAttackPower),y); y=y-16; self:PutStat(3,"Melee Crit",F(d.meleeCrit).."%",y); y=y-16; self:PutStat(3,"Ranged Crit",F(d.rangedCrit).."%",y); y=y-16; self:PutStat(3,"Melee Hit",F(d.hit).."%",y); y=y-16; self:PutStat(3,"Ranged Hit",F(d.rangedHit).."%",y); y=y-16; if d.mainSkill then self:PutStat(3,"MH "..d.mainSkill.type,F(d.mainSkill.total),y); y=y-16 end; if d.rangedSkill then self:PutStat(3,"Ranged "..d.rangedSkill.type,F(d.rangedSkill.total),y) end
-  y=-34; self:PutStat(4,"Spell Power",F(d.spellPower),y); y=y-17; self:PutStat(4,"Healing",F(d.healing),y); y=y-17; self:PutStat(4,"Spell Crit",F(d.spellCrit).."%",y); y=y-17; self:PutStat(4,"Spell Hit",F(d.spellHit).."%",y); y=y-17; self:PutStat(4,"MP5 (items)",F(d.mp5),y); y=y-17; if d.spiritRegen and d.spiritRegen>0 then self:PutStat(4,"MP5 (spirit, not casting)",F(d.spiritRegen),y) end
-  y=-34; self:PutStat(5,"Defense",F(d.defense),y); y=y-17; self:PutStat(5,"Dodge",F(d.dodge).."%",y); y=y-17; self:PutStat(5,"Parry",F(d.parry).."%",y); y=y-17; self:PutStat(5,"Block",F(d.block).."%",y); y=y-17; self:PutStat(5,"Block Value",F(d.blockValue),y)
-  y=-34; self:PutStat(6,"Fire",F(d.resistances.fire),y); y=y-17; self:PutStat(6,"Frost",F(d.resistances.frost),y); y=y-17; self:PutStat(6,"Nature",F(d.resistances.nature),y); y=y-17; self:PutStat(6,"Shadow",F(d.resistances.shadow),y); y=y-17; self:PutStat(6,"Arcane",F(d.resistances.arcane),y)
+  local step=16
+  local function Row(col,label,v,pct,key) self:PutStat(col,label,F(v)..(pct and "%" or ""),y,key,(v or 0)==0); y=y-step end
+  step=16; y=-34; Row(1,"Strength",d.str,false,"str"); Row(1,"Agility",d.agi,false,"agi"); Row(1,"Stamina",d.sta,false,"sta"); Row(1,"Intellect",d.int,false,"int"); Row(1,"Spirit",d.spi,false,"spi")
+  step=17; y=-34; Row(2,"Health",d.health,false,"health"); if d.mana and d.mana>0 then Row(2,"Mana",d.mana,false,"mana") end; Row(2,"Armor",d.armor,false,"armor"); if d.haste and d.haste>0 then Row(2,"Haste",d.haste,true,"haste") end
+  step=16; y=-34; Row(3,"Attack Power",d.attackPower,false,"attackPower"); Row(3,"Ranged AP",d.rangedAttackPower,false,"rangedAttackPower"); Row(3,"Melee Crit",d.meleeCrit,true,"meleeCrit"); Row(3,"Ranged Crit",d.rangedCrit,true,"rangedCrit"); Row(3,"Melee Hit",d.hit,true,"hit"); Row(3,"Ranged Hit",d.rangedHit,true,"rangedHit")
+  if d.mainSkill then Row(3,"MH "..d.mainSkill.type,d.mainSkill.total) end; if d.rangedSkill then Row(3,"Ranged "..d.rangedSkill.type,d.rangedSkill.total) end
+  step=17; y=-34; Row(4,"Spell Power",d.spellPower,false,"spellPower"); Row(4,"Healing",d.healing,false,"healing"); Row(4,"Spell Crit",d.spellCrit,true,"spellCrit"); Row(4,"Spell Hit",d.spellHit,true,"spellHit"); Row(4,"MP5 (items)",d.mp5); if d.spiritRegen and d.spiritRegen>0 then Row(4,"MP5 (spirit, not casting)",d.spiritRegen,false,"spiritRegen") end
+  step=17; y=-34; Row(5,"Defense",d.defense,false,"defense"); Row(5,"Dodge",d.dodge,true,"dodge"); Row(5,"Parry",d.parry,true,"parry"); Row(5,"Block",d.block,true,"block"); Row(5,"Block Value",d.blockValue,false,"blockValue")
+  step=17; y=-34; Row(6,"Fire",d.resistances.fire); Row(6,"Frost",d.resistances.frost); Row(6,"Nature",d.resistances.nature); Row(6,"Shadow",d.resistances.shadow); Row(6,"Arcane",d.resistances.arcane)
+end
+
+-- The set panel collapses to one line (and the window shrinks) when no set pieces are equipped.
+function AB:SetSetPanelCompact(compact)
+  if self.setCompact==compact then return end
+  self.setCompact=compact
+  if compact then self.setPanel:SetHeight(SET_COMPACT); self.setScroll:Hide(); self.setEmptyText:Show(); self.frame:SetHeight(FRAME_H-(SET_FULL-SET_COMPACT))
+  else self.setPanel:SetHeight(SET_FULL); self.setScroll:Show(); self.setEmptyText:Hide(); self.frame:SetHeight(FRAME_H) end
+  self:ApplyEmberBackground(self.frame,10,0.33,0.45,0.30)
+  if self.frame:IsShown() then self:FitToScreen(self.frame) end
 end
 
 function AB:RefreshSetBonuses()
   local counts={}; local slot,id,item,setId
   for slot,id in pairs(self.current.items or {}) do item=self:GetItem(id); setId=self:GetItemSetId(id,item); if setId then counts[setId]=(counts[setId] or 0)+1 end end
   local ids={}; for setId in pairs(counts) do table.insert(ids,setId) end; table.sort(ids)
+  self:SetSetPanelCompact(table.getn(ids)==0)
+  if table.getn(ids)==0 then return end
   local cols={{},{}}
   local lineCounts={0,0}
   local index,count,set,i,b,total,col,block
@@ -203,7 +578,6 @@ function AB:RefreshSetBonuses()
     end
     table.insert(cols[col],table.concat(block,"\n")); lineCounts[col]=lineCounts[col]+table.getn(block)+1
   end
-  if table.getn(ids)==0 then cols[1]={"|cff9ea5b2No item set pieces equipped.|r"}; cols[2]={}; lineCounts[1]=1; lineCounts[2]=0 end
   self.setColumnTexts[1]:SetText(table.concat(cols[1],"\n\n")); self.setColumnTexts[2]:SetText(table.concat(cols[2],"\n\n"))
   local maxLines=math.max(lineCounts[1],lineCounts[2]); local h=math.max(105,maxLines*15+8); self.setScrollChild:SetHeight(h); self.setColumnTexts[1]:SetHeight(h); self.setColumnTexts[2]:SetHeight(h); self.setScroll:SetVerticalScroll(0); if self.setScroll.UpdateScrollChildRect then self.setScroll:UpdateScrollChildRect() end
 end
@@ -644,7 +1018,7 @@ function AB:RefreshTabStates()
   local i,t
   for i=1,table.getn(self.tabs or {}) do
     t=self.tabs[i]
-    if t.frame:IsShown() then t.button:LockHighlight() else t.button:UnlockHighlight() end
+    self:SetTabActive(t.button,t.frame:IsShown() and (not t.isOpen or t.isOpen()))
   end
 end
 
@@ -670,6 +1044,11 @@ end
 -- Called once every window exists (after Talent and Community UIs have been built).
 function AB:SetupTabs()
   if self.tabs then return end
+  -- Flat tabs sitting on the header rule, right-aligned in reading order.
+  local order={self.talentOpenButton,self.communityButton,self.savedBuildsButton,self.itemDatabaseButton}
+  local i
+  for i=1,table.getn(order) do if order[i] then self:StyleTab(order[i]); order[i]:SetHeight(26) end end
+  if self.talentOpenButton then self.talentOpenButton:ClearAllPoints(); self.talentOpenButton:SetWidth(92); self.talentOpenButton:SetPoint("RIGHT",self.communityButton,"LEFT",-3,0) end
   if self.talentOpenButton and self.talentFrame then
     self:AddTab(self.talentOpenButton,self.talentFrame,function() AB.talentFrame:Show(); AB:RefreshTalentUI() end)
   end
@@ -897,4 +1276,77 @@ function AB:OpenSourcePanel(id)
     end
   end
   f.text:SetText(table.concat(lines,"\n")); f:Show()
+end
+
+---------------------------------------------------------------------------
+-- /ab model probe: shows what this client's Dressing Room actually does.
+-- Server scripts (AIO) and client mods can replace DressUpItemLink, so this
+-- watches every model frame and the panel functions while calling it the way
+-- Atlas does, then prints each call with its frame and arguments.
+
+local WATCHED = {"TryOn", "SetUnit", "Undress", "Dress", "SetModel", "SetCreature", "SetDisplayInfo", "SetItem", "SetItemAppearance"}
+local MODEL_TYPES = {DressUpModel = true, PlayerModel = true, Model = true, TabardModel = true, CinematicModel = true}
+
+local function Describe(v)
+  if type(v) == "string" then return '"' .. v .. '"' end
+  if type(v) == "table" and v.GetName then return v:GetName() or "<unnamed frame>" end
+  return tostring(v)
+end
+
+local function Args(list)
+  local out, i = {}, nil
+  for i = 1, table.getn(list) do table.insert(out, Describe(list[i])) end
+  return table.concat(out, ", ")
+end
+
+local function ModelFrames()
+  local frames, f = {}, nil
+  if EnumerateFrames then
+    f = EnumerateFrames()
+    while f do
+      if f.GetObjectType and MODEL_TYPES[f:GetObjectType()] then table.insert(frames, f) end
+      f = EnumerateFrames(f)
+    end
+  elseif DressUpModel then
+    table.insert(frames, DressUpModel)
+  end
+  return frames
+end
+
+function AB:ProbeDressingRoom(slot)
+  slot = slot and string.upper(slot) or nil
+  local id = (slot and self.current.items[slot]) or self.current.items.CHEST or self.current.items.HEAD or 16963
+  local link = "item:" .. id .. ":0:0:0"
+  local log, wrapped, i, j = {}, {}, nil, nil
+  local frames = ModelFrames()
+
+  -- Wrap the watched methods on every model frame (instance fields shadow the shared methods).
+  for i = 1, table.getn(frames) do
+    local f = frames[i]
+    for j = 1, table.getn(WATCHED) do
+      local name = WATCHED[j]
+      local original = f[name]
+      if type(original) == "function" then
+        f[name] = function(self, a1, a2, a3, a4)
+          table.insert(log, Describe(self) .. ":" .. name .. "(" .. Args({a1, a2, a3, a4}) .. ")")
+          return original(self, a1, a2, a3, a4)
+        end
+        table.insert(wrapped, {f, name})
+      end
+    end
+  end
+  local oldShow = ShowUIPanel
+  if oldShow then ShowUIPanel = function(frame, a2) table.insert(log, "ShowUIPanel(" .. Describe(frame) .. ")"); return oldShow(frame, a2) end end
+
+  self.Print("Model probe: " .. table.getn(frames) .. " model frames watched. DressUpItemLink is a " .. type(DressUpItemLink) .. ".")
+  self:ReturnModel()
+  local ok, err = pcall(function() DressUpItemLink(link) end)
+
+  for i = 1, table.getn(wrapped) do wrapped[i][1][wrapped[i][2]] = nil end
+  ShowUIPanel = oldShow
+
+  if not ok then self.Print("DressUpItemLink(" .. link .. ") raised: " .. tostring(err)) end
+  if table.getn(log) == 0 then self.Print("DressUpItemLink(" .. link .. ") made no model calls.") end
+  for i = 1, table.getn(log) do self.Print("  " .. i .. ". " .. log[i]) end
+  self.Print("Please screenshot these lines. The Dressing Room should now be showing that item.")
 end
