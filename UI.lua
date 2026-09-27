@@ -191,64 +191,123 @@ function AB:CreateUI()
 end
 
 ---------------------------------------------------------------------------
--- 3D preview: the player's own model wearing the planned gear. Drag to turn,
--- scroll to zoom. The client can only draw the player's race and can only dress
--- items it has cached (seen at least once this install).
+-- 3D preview: the player's model wearing the planned gear. Drag to turn,
+-- scroll to zoom.
+--
+-- It borrows the game's own Dressing Room model (DressUpModel) - the frame that
+-- Ctrl-clicking an item uses - and hands it back when the preview closes or the
+-- real Dressing Room opens. If that frame is busy or missing, a model of our own
+-- is used instead. Like the Dressing Room, it only puts items on: slots the
+-- plan leaves empty show what you are wearing (/ab model undress strips first).
+-- The client can only draw the player's race and only items it has cached.
 ---------------------------------------------------------------------------
-function AB:CreateModelPreview(parent)
-  local m=CreateFrame("DressUpModel","AshenBuildsPreviewModel",parent); self.previewModel=m
-  m:SetPoint("TOPLEFT",parent,"TOPLEFT",8,-32); m:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-8,30); m:Hide()
-  m.facing=0; m.zoom=0
+-- Slots that change how the model looks.
+local VISIBLE_SLOTS={"HEAD","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET","MAINHAND","OFFHAND","RANGED"}
+local MODEL_SCRIPTS={"OnMouseDown","OnMouseUp","OnMouseWheel","OnUpdate"}
+
+local function ModelScripts(m)
   m:EnableMouse(true); m:EnableMouseWheel(true)
-  m:SetScript("OnMouseDown",function() this.dragX=GetCursorPosition() end)
-  m:SetScript("OnMouseUp",function() this.dragX=nil end)
+  m:SetScript("OnMouseDown",function() AB.previewArea.dragX=GetCursorPosition() end)
+  m:SetScript("OnMouseUp",function() AB.previewArea.dragX=nil end)
+  m:SetScript("OnMouseWheel",function() local a=AB.previewArea; a.zoom=math.max(0,math.min(2.5,a.zoom+arg1*0.25)); this:SetPosition(a.zoom,0,0) end)
   m:SetScript("OnUpdate",function()
-    if this.dragX then local x=GetCursorPosition(); this.facing=this.facing+(x-this.dragX)*0.015; this.dragX=x; this:SetFacing(this.facing) end
+    local a=AB.previewArea
+    if a.dragX then local x=GetCursorPosition(); a.facing=a.facing+(x-a.dragX)*0.015; a.dragX=x; this:SetFacing(a.facing) end
     -- Dressing waits for the model SetUnit started loading; see RefreshModel.
-    if this.dressAt and GetTime()>=this.dressAt[1] then table.remove(this.dressAt,1); if table.getn(this.dressAt)==0 then this.dressAt=nil end; AB:DressModel() end
+    if a.dressAt and GetTime()>=a.dressAt[1] then table.remove(a.dressAt,1); if table.getn(a.dressAt)==0 then a.dressAt=nil end; AB:DressModel() end
   end)
-  m:SetScript("OnMouseWheel",function() this.zoom=math.max(0,math.min(2.5,this.zoom+arg1*0.25)); this:SetPosition(this.zoom,0,0) end)
-  m.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); m.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); m.note:SetWidth(490)
-  local d=AB.THEME.dim; m.note:SetTextColor(d[1]+.2,d[2]+.2,d[3]+.2); m.note:Hide()
+end
+
+function AB:CreateModelPreview(parent)
+  local area=CreateFrame("Frame",nil,parent); self.previewArea=area
+  area:SetPoint("TOPLEFT",parent,"TOPLEFT",8,-32); area:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-8,30); area:Hide()
+  area.facing=0; area.zoom=0
+  local own=CreateFrame("DressUpModel","AshenBuildsPreviewModel",area); own:SetAllPoints(area); own:Hide(); ModelScripts(own); self.ownModel=own
+  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); area.note:SetWidth(490)
+  local d=AB.THEME.dim; area.note:SetTextColor(d[1]+.2,d[2]+.2,d[3]+.2); area.note:Hide()
+  -- Always give the Dressing Room its model back.
+  local oldHide=self.frame:GetScript("OnHide"); self.frame:SetScript("OnHide",function() AB:ReturnModel(); if oldHide then oldHide() end end)
+  if DressUpFrame then
+    local oldShow=DressUpFrame:GetScript("OnShow")
+    DressUpFrame:SetScript("OnShow",function() local was=AB.borrowedModel; AB:ReturnModel(); if oldShow then oldShow() end; if was and AB.previewArea:IsShown() then AB:RefreshModel() end end)
+  end
+end
+
+-- Moves DressUpModel into the preview, remembering everything needed to put it back.
+function AB:BorrowModel()
+  local bm=DressUpModel
+  if self.borrowedModel then return bm end
+  if not bm or not bm.TryOn or not bm.GetParent or (DressUpFrame and DressUpFrame:IsShown()) then return nil end
+  local saved={parent=bm:GetParent(),w=bm:GetWidth(),h=bm:GetHeight(),level=bm:GetFrameLevel(),shown=bm:IsShown(),points={},scripts={}}
+  local i,p,rel,rp,x,y
+  for i=1,5 do p,rel,rp,x,y=bm:GetPoint(i); if p then table.insert(saved.points,{p,rel,rp,x,y}) end end
+  for i=1,table.getn(MODEL_SCRIPTS) do saved.scripts[MODEL_SCRIPTS[i]]=bm:GetScript(MODEL_SCRIPTS[i]) end
+  saved.mouse=bm.IsMouseEnabled and bm:IsMouseEnabled(); saved.wheel=bm.IsMouseWheelEnabled and bm:IsMouseWheelEnabled()
+  self.borrowedModel=saved
+  bm:SetParent(self.previewArea); bm:ClearAllPoints(); bm:SetAllPoints(self.previewArea); bm:SetFrameLevel(self.previewArea:GetFrameLevel()+2)
+  ModelScripts(bm); bm:Show()
+  return bm
+end
+
+function AB:ReturnModel()
+  local s=self.borrowedModel; if not s then return end
+  self.borrowedModel=nil
+  local bm=DressUpModel
+  bm:SetParent(s.parent); bm:ClearAllPoints()
+  local i; for i=1,table.getn(s.points) do local p=s.points[i]; bm:SetPoint(p[1],p[2],p[3],p[4],p[5]) end
+  if s.w and s.h then bm:SetWidth(s.w); bm:SetHeight(s.h) end
+  if s.level then bm:SetFrameLevel(s.level) end
+  for i=1,table.getn(MODEL_SCRIPTS) do bm:SetScript(MODEL_SCRIPTS[i],s.scripts[MODEL_SCRIPTS[i]]) end
+  bm:EnableMouse(s.mouse and true or false); if bm.EnableMouseWheel then bm:EnableMouseWheel(s.wheel and true or false) end
+  bm:SetFacing(0); bm:SetPosition(0,0,0)
+  if not s.shown then bm:Hide() end
+  if self.activeModel==bm then self.activeModel=nil end
 end
 
 -- SetUnit loads the character model over the next frame or two, and anything
 -- tried on before it finishes is lost with the old model. So load first and
 -- dress a moment later, then once more in case the model was slow.
 function AB:RefreshModel()
-  local m=self.previewModel
-  if not m or not m:IsShown() then return end
+  local area=self.previewArea
+  if not area or not area:IsShown() then return end
+  local m=self:BorrowModel()
+  if m then self.ownModel:Hide() else m=self.ownModel; m:Show() end
+  self.activeModel=m
   m:SetUnit("player")
-  m.dressAt={GetTime()+0.1,GetTime()+0.6}
-  local missing,slot,id=0,nil,nil
-  for slot,id in pairs(self.current.items or {}) do if not GetItemInfo(id) then missing=missing+1 end end
+  area.dressAt={GetTime()+0.1,GetTime()+0.6}
+  local missing,i,id=0,nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do id=self.current.items[VISIBLE_SLOTS[i]]; if id and not GetItemInfo(id) then missing=missing+1 end end
   local notes={"Drag to turn, scroll to zoom."}
   local myRace=UnitRace("player")
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
   if missing>0 then table.insert(notes,missing.." item"..(missing==1 and "" or "s").." not in your game cache yet - see "..(missing==1 and "it" or "them").." once in game to preview.") end
-  m.note:SetText(table.concat(notes,"  "))
+  area.note:SetText(table.concat(notes,"  "))
 end
 
--- Strips the model and puts the planned gear on it. Uses the item string from
--- GetItemInfo, the same form the Dressing Room passes to TryOn.
+-- Puts the planned gear on, using the same item strings the Dressing Room uses.
 function AB:DressModel()
-  local m=self.previewModel
-  if not m or not m:IsShown() then return end
-  if m.Undress then m:Undress() end
-  local worn,slot,i,id,link,_=0,nil,nil,nil,nil,nil
+  local m=self.activeModel
+  if not m or not self.previewArea:IsShown() then return end
+  local undress=AshenBuildsDB.settings and AshenBuildsDB.settings.modelUndress
+  if undress and m.Undress then m:Undress() end
+  local worn,i,id,link,_=0,nil,nil,nil,nil
   -- Main hand before off hand so a two-hander never clears the off hand afterwards.
-  for i=1,table.getn(self.SLOTS) do
-    slot=self.SLOTS[i]; id=self.current.items[slot]
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=self.current.items[VISIBLE_SLOTS[i]]
     if id then _,link=GetItemInfo(id); if link then m:TryOn(link); worn=worn+1 end end
   end
-  m:SetFacing(m.facing); m:SetPosition(m.zoom,0,0)
-  m.worn=worn
+  m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
+  self.previewArea.worn=worn
 end
 
 function AB:SetStatsView(view)
   self.statsView=view
   local totals=view~="preview"
-  if totals then self.statsCards:Show(); self.previewModel:Hide(); self.previewModel.note:Hide() else self.statsCards:Hide(); self.previewModel:Show(); self.previewModel.note:Show() end
+  if totals then
+    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea:Hide(); self.previewArea.note:Hide()
+  else
+    self.statsCards:Hide(); self.previewArea:Show(); self.previewArea.note:Show()
+  end
   local on,off=self.totalsTab,self.previewTab
   if not totals then on,off=off,on end
   on.fs:SetTextColor(1,1,1); on.bar:Show()

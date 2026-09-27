@@ -698,8 +698,14 @@ eventFrame:SetScript("OnEvent",function()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
       elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
       elseif cmd=="model" then
-        local m=AshenBuilds.previewModel
-        AB_Print("Model preview: "..((m and m:IsShown()) and "open" or "closed")..", items put on last time: "..((m and m.worn) or 0)..".")
+        if arg=="undress" then
+          AshenBuildsDB.settings.modelUndress=not AshenBuildsDB.settings.modelUndress
+          AB_Print("Model preview will "..(AshenBuildsDB.settings.modelUndress and "strip the model before" or "no longer strip the model before").." putting gear on.")
+          AshenBuilds:RefreshModel()
+        else
+          local a=AshenBuilds.previewArea
+          AB_Print("Model preview: "..((a and a:IsShown()) and "open" or "closed")..", using "..(AshenBuilds.borrowedModel and "the Dressing Room model" or "its own model")..", items put on last time: "..((a and a.worn) or 0)..".")
+        end
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)
