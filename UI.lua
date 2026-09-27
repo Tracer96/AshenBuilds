@@ -284,24 +284,45 @@ function AB:RefreshModel()
   area.note:SetText(table.concat(notes,"  "))
 end
 
--- Puts the planned gear on, using the same item strings the Dressing Room uses.
+-- Puts the planned gear on through the client's own DressUpItemLink.
+-- On this client that routine is not the stock one: it tries the item ID and
+-- then a translated appearance ID for Turtle's custom items (the /ab model
+-- probe showed TryOn(80314) followed by TryOn("47250")), so a plain TryOn
+-- can't dress custom gear. While it runs, DressUpModel points at the preview
+-- model, the Dressing Room window is kept closed and the per-item SetUnit that
+-- would reset the model is skipped; everything is restored afterwards.
+local function DressThroughClient(m,links)
+  local realModel,realShow,realDressUp=DressUpModel,ShowUIPanel,DressUpFrame
+  DressUpModel=m
+  if realShow then ShowUIPanel=function(frame,a2) if frame~=realDressUp then return realShow(frame,a2) end end end
+  m.SetUnit=function() end
+  local i
+  local ok,err=pcall(function() for i=1,table.getn(links) do DressUpItemLink(links[i]) end end)
+  m.SetUnit=nil
+  ShowUIPanel=realShow; DressUpModel=realModel
+  return ok,err
+end
+
 function AB:DressModel()
   local m=self.activeModel
   if not m or not self.previewArea:IsShown() then return end
   local undress=AshenBuildsDB.settings and AshenBuildsDB.settings.modelUndress
   if undress and m.Undress then m:Undress() end
-  local worn,i,id,link=0,nil,nil,nil
-  local first
   -- Main hand before off hand so a two-hander never clears the off hand afterwards.
-  -- Always the plain "item:ID:0:0:0" string Atlas passes to the Dressing Room: API
-  -- mods (ClassicAPI) can make GetItemInfo return a coloured link TryOn ignores.
+  local links,i,id={},nil,nil
   for i=1,table.getn(VISIBLE_SLOTS) do
     id=self.current.items[VISIBLE_SLOTS[i]]
-    if id then link="item:"..id..":0:0:0"; m:TryOn(link); worn=worn+1; first=first or link end
+    if id then table.insert(links,"item:"..id..":0:0:0") end
   end
-  self.previewArea.lastLink=first
+  local ok,err=true,nil
+  if DressUpItemLink then ok,err=DressThroughClient(m,links) end
+  -- No client routine, or it failed: fall back to trying the item IDs directly.
+  if not DressUpItemLink or not ok then
+    for i=1,table.getn(links) do local _,_,n=string.find(links[i],"item:(%d+)"); m:TryOn(tonumber(n)) end
+  end
+  self.previewArea.lastLink=links[1]; self.previewArea.lastError=err
   m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
-  self.previewArea.worn=worn
+  self.previewArea.worn=table.getn(links)
 end
 
 function AB:SetStatsView(view)
