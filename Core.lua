@@ -317,6 +317,29 @@ function AshenBuilds:SaveBuild(name, saveAs)
   return true
 end
 
+-- Writes the planner back into the saved build it came from, so edits to a saved
+-- build (gear, enchants, talents, class...) survive switching builds or logging
+-- out. Renaming and republishing still wait for an explicit Save.
+function AshenBuilds:AutoSave()
+  local name = self.current and self.current.savedName
+  if not name or not AshenBuildsDB.builds[name] then return end
+  local copy = self:DeepCopy(self.current); copy.savedName = nil; copy.name = name
+  AshenBuildsDB.builds[name] = copy
+end
+
+-- True when a build has anything worth keeping.
+function AshenBuilds:BuildHasContent(build)
+  if next(build.items or {}) or next(build.enchants or {}) then return true end
+  return next((build.talents and build.talents.points) or {}) and true or false
+end
+
+-- Runs fn now, or after a confirmation when it would throw away a never-saved build.
+function AshenBuilds:ConfirmDiscard(what, fn)
+  if self.current.savedName or not self:BuildHasContent(self.current) or not self.ShowPrompt then fn(); return true end
+  self:ShowPrompt({title="UNSAVED BUILD", text="Your current build hasn't been saved.\nDiscard it and load |cffffffff"..what.."|r?", accept="Discard", onAccept=fn})
+  return false
+end
+
 function AshenBuilds:RenameBuild(old, new)
   new = AB_CleanName(new)
   local build = AshenBuildsDB.builds[old]

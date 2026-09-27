@@ -89,10 +89,13 @@ function AB:CreateUI()
   local save=MakeButton(f,"Save",58,22); save:SetPoint("LEFT",nameBox,"RIGHT",6,0); save:SetScript("OnClick",function() AB:SaveBuild(AB.nameBox:GetText()) end)
   local saveAs=MakeButton(f,"Save As",70,22); saveAs:SetPoint("LEFT",save,"RIGHT",4,0); saveAs:SetScript("OnClick",function() AB:ShowPrompt({title="SAVE AS NEW BUILD",text="Name for the copy:",edit=true,default=AB.nameBox:GetText(),accept="Save",onAccept=function(text) AB:SaveBuild(text,true) end}) end)
   nameBox:SetScript("OnEnterPressed",function() this:ClearFocus(); AB:SaveBuild(this:GetText()) end); nameBox:SetScript("OnEscapePressed",function() this:ClearFocus() end)
-  local new=MakeButton(f,"New",58,22); new:SetPoint("LEFT",saveAs,"RIGHT",4,0); new:SetScript("OnClick",function() AB.current=AB.NewBuildData("New Build"); AshenBuildsDB.current=AB.current; AB.selectedBuild=nil; AB:RefreshUI() end)
+  local new=MakeButton(f,"New",58,22); new:SetPoint("LEFT",saveAs,"RIGHT",4,0); new:SetScript("OnClick",function() AB:ConfirmDiscard("a new build",function() AB.current=AB.NewBuildData("New Build"); AshenBuildsDB.current=AB.current; AB.selectedBuild=nil; AB:RefreshUI() end) end)
   local clear=MakeButton(f,"Clear Gear",82,22); clear:SetPoint("LEFT",new,"RIGHT",4,0); clear:SetScript("OnClick",function() AB.current.items={}; AB.current.enchants={}; AB:RefreshUI() end)
   local export=MakeButton(f,"Export",62,22); export:SetPoint("LEFT",clear,"RIGHT",4,0); export:SetScript("OnClick",function() AB:ShowCodeDialog("Export Build",AB:ExportBuild(),false) end)
-  local import=MakeButton(f,"Import",62,22); import:SetPoint("LEFT",export,"RIGHT",4,0); import:SetScript("OnClick",function() AB:ShowCodeDialog("Import Build","",true) end)
+  local import=MakeButton(f,"Import",62,22); import:SetPoint("LEFT",export,"RIGHT",4,0);
+  self.saveStateText=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); self.saveStateText:SetPoint("LEFT",import,"RIGHT",12,0)
+  -- The typed name is kept on the build right away, so a refresh never wipes it; Save still decides whether it renames.
+  nameBox:SetScript("OnTextChanged",function() if AB.current then AB.current.name=this:GetText() end end); import:SetScript("OnClick",function() AB:ShowCodeDialog("Import Build","",true) end)
 
   local function Profile(label,x,w,listFn,getFn,setFn)
     local fs=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); fs:SetPoint("TOPLEFT",f,"TOPLEFT",x,-82); fs:SetText(label)
@@ -141,7 +144,12 @@ function AB:ShowSlotTooltip(button)
 end
 
 function AB:RefreshUI()
+  -- Every change to the build ends in a refresh, so this is where edits are kept.
+  self:AutoSave()
   if not self.frame then return end
+  if self.saveStateText then
+    if self.current.savedName then self.saveStateText:SetText("|cff7fd97fChanges save automatically|r") else self.saveStateText:SetText("|cffffb347Not saved yet - press Save|r") end
+  end
   self.nameBox:SetText(self.current.name or "New Build"); self.classButton:SetText(self.current.class); self.raceButton:SetText(self.current.race); self.specButton:SetText(self.current.spec); self.levelBox:SetText(self:GetBuildLevel())
   local slot,b,id,item,c,enchant
   for slot,b in pairs(self.slotButtons) do id=self.current.items[slot]; item=id and self:GetItem(id); enchant=AshenBuildsEnchants[(self.current.enchants and self.current.enchants[slot]) or 0]; if item then b.icon:SetTexture(item.icon or "Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText(item.n); c=qualityColors[item.q] or qualityColors[1]; b.itemText:SetTextColor(c[1],c[2],c[3]) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); b.itemText:SetText("Empty"); b.itemText:SetTextColor(AB.THEME.empty[1],AB.THEME.empty[2],AB.THEME.empty[3]) end; b.enchantText:SetText(enchant and enchant.n or (item and "+ Add enchant" or "No enchant")); if enchant then b.enchantText:SetTextColor(.2,1,.2) else b.enchantText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3]) end end
@@ -258,7 +266,7 @@ function AB:CreateBuildBrowser()
     r.delete=MakeButton(r,"Delete",66,22); r.delete:SetPoint("RIGHT",r.publish,"LEFT",-4,0); r.delete:SetScript("OnClick",function() local n=this:GetParent().buildName; if n then AB:PromptDeleteBuild(n) end end)
     r.rename=MakeButton(r,"Rename",70,22); r.rename:SetPoint("RIGHT",r.delete,"LEFT",-4,0); r.rename:SetScript("OnClick",function() local n=this:GetParent().buildName; if n then AB:PromptRenameBuild(n) end end)
     r:RegisterForClicks("LeftButtonUp","RightButtonUp")
-    r:SetScript("OnClick",function() if not this.buildName then return end; if arg1=="RightButton" then AB:PromptDeleteBuild(this.buildName) else AB:LoadBuild(this.buildName); f:Hide() end end)
+    r:SetScript("OnClick",function() if not this.buildName then return end; if arg1=="RightButton" then AB:PromptDeleteBuild(this.buildName) else local n=this.buildName; AB:ConfirmDiscard(n,function() AB:LoadBuild(n); f:Hide() end) end end)
     self.buildRows[i]=r
   end
   local help=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); help:SetPoint("BOTTOM",f,"BOTTOM",0,24); help:SetText("Click a build to load it  -  Saving a loaded build under a new name renames it"); help:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
@@ -493,19 +501,56 @@ end
 -- Enchants
 ---------------------------------------------------------------------------
 local ENCHANT_ROWS=10
+-- Stat groups for the enchant filter; picking one also sorts by that group's total.
+local ENCHANT_GROUPS={
+  {"all","All Stats"},
+  {"str","Strength",{"str"}},{"agi","Agility",{"agi"}},{"sta","Stamina",{"sta"}},{"int","Intellect",{"int"}},{"spi","Spirit",{"spi"}},
+  {"ap","Attack Power",{"ap","rap"}},{"hitcrit","Hit & Crit",{"hit","crit","rangedHit","rangedCrit","spellHit","spellCrit"}},{"haste","Haste",{"haste"}},
+  {"spell","Spell Damage",{"spellPower","firePower","frostPower","shadowPower","arcanePower","naturePower","holyPower"}},{"healing","Healing",{"healing"}},
+  {"mana","Mana & Regen",{"mana","mp5"}},{"health","Health",{"health"}},
+  {"tank","Armor & Defense",{"armor","defense","dodge","parry","block","blockValue"}},
+  {"resist","Resistances",{"fireRes","frostRes","natureRes","shadowRes","arcaneRes"}},
+  {"pen","Penetration",{"armorPen","spellPen"}},{"leech","Vampirism",{"leech"}},
+  {"other","Other Effects"},
+}
+local function GroupOf(key) local i for i=1,table.getn(ENCHANT_GROUPS) do if ENCHANT_GROUPS[i][1]==key then return ENCHANT_GROUPS[i] end end return ENCHANT_GROUPS[1] end
+local function GroupValue(e,group) local v,i=0,nil; for i=1,table.getn(group[3] or {}) do v=v+(e.stats[group[3][i]] or 0) end; return v end
+
+-- a beats b when it has at least as much of every stat b has, more of something, and nothing b lacks isn't a bonus.
+local function Dominates(a,b)
+  if not next(a.stats) or not next(b.stats) then return false end
+  local k,v,better=nil,nil,false
+  for k,v in pairs(b.stats) do if (a.stats[k] or 0)<v then return false elseif (a.stats[k] or 0)>v then better=true end end
+  for k,v in pairs(a.stats) do if not b.stats[k] and v>0 then better=true end end
+  return better
+end
+
 function AB:CreateEnchantBrowser()
-  local f=CreateFrame("Frame","AshenBuildsEnchantBrowser",UIParent); f:SetWidth(520); f:SetHeight(500); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f)
+  self.enchantFilter={group="all",lower=false}
+  local f=CreateFrame("Frame","AshenBuildsEnchantBrowser",UIParent); f:SetWidth(560); f:SetHeight(566); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f)
   self:SetupWindow(f,{wheel=function() AB.enchantOffset=math.max(0,(AB.enchantOffset or 0)-arg1); AB:RenderEnchantRows() end}); f:Hide(); self.enchantBrowser=f
-  self:ApplyEmberBackground(f,10,0.5,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-84,-22,44)
+  self:ApplyEmberBackground(f,10,0.5,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-130,-22,44)
   f.title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); f.title:SetPoint("TOP",f,"TOP",0,-18)
   local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
-  f.item=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); f.item:SetPoint("TOPLEFT",f,"TOPLEFT",28,-58); f.item:SetWidth(300); f.item:SetJustifyH("LEFT")
+  f.item=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); f.item:SetPoint("TOPLEFT",f,"TOPLEFT",28,-58); f.item:SetWidth(340); f.item:SetJustifyH("LEFT")
   local none=MakeButton(f,"Remove Enchant",130,22); none:SetPoint("TOPRIGHT",f,"TOPRIGHT",-26,-52); none:SetScript("OnClick",function() AB:ApplyEnchant(AB.enchantSlot,0); f:Hide() end)
+
+  local search=CreateFrame("EditBox","AshenBuildsEnchantSearch",f,"InputBoxTemplate"); search:SetWidth(200); search:SetHeight(24); search:SetPoint("TOPLEFT",f,"TOPLEFT",32,-100); search:SetAutoFocus(false); self.enchantSearch=search
+  search:SetScript("OnTextChanged",function() AB:FilterEnchants() end); search:SetScript("OnEnterPressed",function() this:ClearFocus() end); search:SetScript("OnEscapePressed",function() this:ClearFocus() end)
+  self:Caption(f,"Search (name or effect)",search,-6,4)
+  self.enchantGroupDrop=self:CreateDropdown(f,150,{
+    items=function() local out={}; local i; for i=1,table.getn(ENCHANT_GROUPS) do table.insert(out,{value=ENCHANT_GROUPS[i][1],text=ENCHANT_GROUPS[i][2]}) end; return out end,
+    getText=function() return GroupOf(AB.enchantFilter.group)[2] end,
+    isChecked=function(v) return AB.enchantFilter.group==v end,
+    onSelect=function(v) AB.enchantFilter.group=v; AB:FilterEnchants() end})
+  self.enchantGroupDrop:SetPoint("LEFT",search,"RIGHT",14,0); self:Caption(f,"Stat",self.enchantGroupDrop)
+  self.enchantLowerCheck=self:CreateCheck(f,"Show lower ranks",function(v) AB.enchantFilter.lower=v; AB:FilterEnchants() end); self.enchantLowerCheck:SetPoint("LEFT",self.enchantGroupDrop,"RIGHT",10,0)
+
   self.enchantRows={}; local i
   for i=1,ENCHANT_ROWS do
-    local r=CreateFrame("Button",nil,f); r:SetWidth(466); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",26,-90-(i-1)*38); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-    r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetPoint("TOPLEFT",r,"TOPLEFT",8,-3); r.text:SetWidth(450); r.text:SetJustifyH("LEFT")
-    r.desc=r:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); r.desc:SetPoint("BOTTOMLEFT",r,"BOTTOMLEFT",8,3); r.desc:SetWidth(450); r.desc:SetJustifyH("LEFT"); r.desc:SetTextColor(.3,.95,.3)
+    local r=CreateFrame("Button",nil,f); r:SetWidth(506); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",26,-136-(i-1)*38); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetPoint("TOPLEFT",r,"TOPLEFT",8,-3); r.text:SetWidth(490); r.text:SetJustifyH("LEFT")
+    r.desc=r:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); r.desc:SetPoint("BOTTOMLEFT",r,"BOTTOMLEFT",8,3); r.desc:SetWidth(490); r.desc:SetJustifyH("LEFT"); r.desc:SetTextColor(.3,.95,.3)
     r:SetScript("OnClick",function() if this.enchantID then AB:ApplyEnchant(AB.enchantSlot,this.enchantID); f:Hide() end end)
     r:SetScript("OnEnter",function() local e=this.enchantID and AshenBuildsEnchants[this.enchantID]; if e and e.tip then GameTooltip:SetOwner(this,"ANCHOR_RIGHT"); GameTooltip:SetText(e.n,1,.82,0); GameTooltip:AddLine(e.tip,.1,1,.1,true); GameTooltip:Show() end end)
     r:SetScript("OnLeave",function() GameTooltip:Hide() end)
@@ -518,12 +563,48 @@ function AB:OpenEnchantBrowser(slot)
   if not AshenBuildsEnchantSlots[slot] then self.Print(self.SLOT_LABELS[slot].." can't be enchanted."); return end
   local item=self:GetItem(self.current.items[slot] or 0)
   if not item then self.Print("Equip an item in "..self.SLOT_LABELS[slot].." before choosing an enchant."); return end
-  self.enchantSlot=slot; self.enchantOffset=0; self.enchantMatches={}
+  self.enchantSlot=slot
+  -- Everything that fits this item, before search and stat filters.
+  self.enchantCandidates={}
   local i,id
-  for i=1,table.getn(AshenBuildsEnchantOrder) do id=AshenBuildsEnchantOrder[i]; if self:IsEnchantAllowed(slot,id,item) then table.insert(self.enchantMatches,id) end end
+  for i=1,table.getn(AshenBuildsEnchantOrder) do id=AshenBuildsEnchantOrder[i]; if self:IsEnchantAllowed(slot,id,item) then table.insert(self.enchantCandidates,id) end end
   local f=self.enchantBrowser; f.title:SetText("ENCHANT "..string.upper(self.SLOT_LABELS[slot]))
   local c=qualityColors[item.q] or qualityColors[1]; f.item:SetText(item.n); f.item:SetTextColor(c[1],c[2],c[3])
-  self:RenderEnchantRows(); f:Show()
+  self.enchantSearch:SetText(""); self.enchantGroupDrop:Refresh(); self.enchantLowerCheck:SetChecked(self.enchantFilter.lower and 1 or nil)
+  self:FilterEnchants(); f:Show()
+end
+
+function AB:FilterEnchants()
+  if not self.enchantCandidates then return end
+  local query=string.lower(self.enchantSearch:GetText() or "")
+  local group=GroupOf(self.enchantFilter.group)
+  local current=self.current.enchants[self.enchantSlot]
+  local pool,out={},{}
+  local i,j,id,e,keep,text
+  for i=1,table.getn(self.enchantCandidates) do
+    id=self.enchantCandidates[i]; e=AshenBuildsEnchants[id]; keep=true
+    if group[1]=="other" then keep=not next(e.stats)
+    elseif group[3] then keep=GroupValue(e,group)>0 end
+    if keep and query~="" then
+      text=string.lower(e.n.." "..(e.tip or "").." "..self:StatSummary(e.stats))
+      keep=string.find(text,query,1,true) and true or false
+    end
+    if keep then table.insert(pool,id) end
+  end
+  for i=1,table.getn(pool) do
+    id=pool[i]; keep=true
+    -- Hide enchants another candidate strictly beats (Minor/Lesser/Greater Stamina when Superior exists),
+    -- but never the one currently applied.
+    if not self.enchantFilter.lower and id~=current then
+      for j=1,table.getn(pool) do if pool[j]~=id and Dominates(AshenBuildsEnchants[pool[j]],AshenBuildsEnchants[id]) then keep=false; break end end
+    end
+    if keep then table.insert(out,id) end
+  end
+  if group[3] then
+    local g=group; table.sort(out,function(a,b) local va,vb=GroupValue(AshenBuildsEnchants[a],g),GroupValue(AshenBuildsEnchants[b],g); if va~=vb then return va>vb end return AshenBuildsEnchants[a].n<AshenBuildsEnchants[b].n end)
+  end
+  self.enchantMatches=out; self.enchantHidden=table.getn(pool)-table.getn(out); self.enchantOffset=0
+  self:RenderEnchantRows()
 end
 
 function AB:RenderEnchantRows()
@@ -539,7 +620,10 @@ function AB:RenderEnchantRows()
       r.desc:SetText(desc); r:Show()
     else r.enchantID=nil; r:Hide() end
   end
-  self.enchantBrowser.more:SetText(total>ENCHANT_ROWS and ("Showing "..(self.enchantOffset+1).."-"..math.min(total,self.enchantOffset+ENCHANT_ROWS).." of "..total.." - scroll for more") or (total.." enchants"))
+  local text
+  if total==0 then text="No enchants match." elseif total>ENCHANT_ROWS then text="Showing "..(self.enchantOffset+1).."-"..math.min(total,self.enchantOffset+ENCHANT_ROWS).." of "..total.." - scroll for more" else text=total.." enchant"..(total==1 and "" or "s") end
+  if (self.enchantHidden or 0)>0 then text=text.."   |cff9ea5b2("..self.enchantHidden.." lower ranks hidden)|r" end
+  self.enchantBrowser.more:SetText(text)
 end
 
 function AB:CreateCodeDialog() local f=CreateFrame("Frame","AshenBuildsCodeDialog",UIParent); f:SetWidth(650); f:SetHeight(190); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f); f:Hide(); self.codeDialog=f; self:ApplyEmberBackground(f,10,0.5,0.5,0.45); self:AddEmberHeader(f,34); f.title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); f.title:SetPoint("TOP",f,"TOP",0,-18); local edit=CreateFrame("EditBox","AshenBuildsCodeEdit",f,"InputBoxTemplate"); edit:SetWidth(580); edit:SetHeight(30); edit:SetPoint("TOP",f,"TOP",0,-62); edit:SetAutoFocus(false); edit:SetMaxLetters(4096); self.codeEdit=edit; local action=MakeButton(f,"Import",90,24); action:SetPoint("BOTTOM",f,"BOTTOM",-50,24); self.codeAction=action; local cancel=MakeButton(f,"Close",90,24); cancel:SetPoint("LEFT",action,"RIGHT",10,0); cancel:SetScript("OnClick",function() f:Hide() end) end

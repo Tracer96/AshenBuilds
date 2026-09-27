@@ -16,3 +16,6 @@ Ashen Builds v0.9.7
 - Fixed edit boxes (item level range, stat minimums, prompts) drawing only their end caps.
 - Minimap button: left-click toggles the planner, right-click toggles Community Builds, drag to move
   it around the minimap (position is saved). /ab minimap hides or shows it.
+- Edits to a saved build (gear, enchants, talents, class) now save automatically, so switching builds or
+  logging out never loses them. Save still renames/republishes. Loading over a never-saved build asks first.
+- Enchant picker: search box, stat filter (sorts by that stat) and lower ranks hidden by default.
