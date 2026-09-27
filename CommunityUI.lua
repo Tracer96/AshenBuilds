@@ -124,7 +124,7 @@ function AB:CreateCommunityUI()
   self:SetupWindow(f, {fit = true, wheel = function() AB:ScrollCommunityPage(arg1) end})
   f:Hide(); self.communityFrame = f
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.4); self:AddEmberHeader(f, 34); self:AddEmberWell(f, 22, -80, -22, 48)
-  f:SetScript("OnShow", function() AB:FitToScreen(this); AB:FocusWindow(this); AB:FadeIn(this); AB:RefreshCommunityList() end)
+  f:SetScript("OnShow", function() AB:FitToScreen(this); AB:FocusWindow(this); AB:FadeIn(this); AB:UpdateModelMouse(); AB:RefreshCommunityList() end)
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("COMMUNITY BUILDS")
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)

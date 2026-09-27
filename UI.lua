@@ -41,8 +41,8 @@ function AB:SetupWindow(frame,opts)
   frame:SetScript("OnMouseDown",function() AB:FocusWindow(this) end)
   frame:SetScript("OnDragStart",function() AB:FocusWindow(this); this:StartMoving() end)
   frame:SetScript("OnDragStop",function() this:StopMovingOrSizing() end)
-  frame:SetScript("OnShow",function() if opts.fit then AB:FitToScreen(this) end; AB:FocusWindow(this); AB:FadeIn(this) end)
-  frame:SetScript("OnHide",function() ClearWindowFocus(this); if AB.CloseDropdown then AB.CloseDropdown() end end)
+  frame:SetScript("OnShow",function() if opts.fit then AB:FitToScreen(this) end; AB:FocusWindow(this); AB:FadeIn(this); if AB.UpdateModelMouse then AB:UpdateModelMouse() end end)
+  frame:SetScript("OnHide",function() ClearWindowFocus(this); if AB.CloseDropdown then AB.CloseDropdown() end; if AB.UpdateModelMouse then AB:UpdateModelMouse() end end)
   frame:EnableMouseWheel(true); frame:SetScript("OnMouseWheel",opts.wheel or function() end)
   tinsert(UISpecialFrames,frame:GetName())
 end
@@ -76,6 +76,18 @@ local function EnchantHint(b,show)
   if show then b.enchantText:SetText("+ Enchant"); b.enchantText:SetTextColor(AB.THEME.gold[1],AB.THEME.gold[2],AB.THEME.gold[3]); b.enchantButton:Show()
   else b.enchantButton:Hide() end
 end
+-- Moving from the slot onto its "+ Enchant" line fires the slot's OnLeave first, so
+-- the hint is only hidden once the mouse is over neither of them for a moment.
+local function HintWatch()
+  local b=this
+  local focus=GetMouseFocus and GetMouseFocus()
+  if GetMouseFocus then
+    if focus==b or focus==b.enchantButton then b.hintHideAt=nil; return end
+  elseif Over(b) then b.hintHideAt=nil; return end
+  if not b.hintHideAt then b.hintHideAt=GetTime()+0.2 end
+  if GetTime()>=b.hintHideAt then b.hintHideAt=nil; b:SetScript("OnUpdate",nil); EnchantHint(b,false) end
+end
+local function WatchHint(b) b.hintHideAt=nil; b:SetScript("OnUpdate",HintWatch) end
 
 function AB:CreateGearSlot(parent,slot,x,y,side)
   local b=CreateFrame("Button",nil,parent); b:SetWidth(155); b:SetHeight(54); b:SetPoint("TOPLEFT",parent,"TOPLEFT",x,y); b.slot=slot
@@ -96,11 +108,11 @@ function AB:CreateGearSlot(parent,slot,x,y,side)
   b.enchantText=eb:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); b.enchantText:SetAllPoints(eb); b.enchantText:SetJustifyH("CENTER")
   eb:SetScript("OnClick",function() AB:OpenEnchantBrowser(this.slot) end)
   eb:SetScript("OnEnter",function() GameTooltip:SetOwner(this,"ANCHOR_RIGHT"); GameTooltip:SetText(this:GetParent().hasEnchant and "Click to change the enchant" or "Click to choose an enchant",1,.82,0); GameTooltip:Show() end)
-  eb:SetScript("OnLeave",function() GameTooltip:Hide(); if not Over(this:GetParent()) then EnchantHint(this:GetParent(),false) end end)
+  eb:SetScript("OnLeave",function() GameTooltip:Hide(); WatchHint(this:GetParent()) end)
   eb:Hide()
   b:RegisterForClicks("LeftButtonUp","RightButtonUp"); b:SetScript("OnClick",function() if arg1=="RightButton" then AB:RemoveItem(this.slot) elseif IsShiftKeyDown() then AB:OpenEnchantBrowser(this.slot) else AB:OpenItemBrowser(this.slot) end end)
   b:SetScript("OnEnter",function() AB:ShowSlotTooltip(this); EnchantHint(this,true) end)
-  b:SetScript("OnLeave",function() GameTooltip:Hide(); if not Over(this) then EnchantHint(this,false) end end)
+  b:SetScript("OnLeave",function() GameTooltip:Hide(); WatchHint(this) end)
   self.slotButtons[slot]=b
 end
 
@@ -262,13 +274,15 @@ function AB:BorrowModel()
   local bm=DressUpModel
   if self.borrowedModel then return bm end
   if not bm or not bm.TryOn or not bm.GetParent or (DressUpFrame and DressUpFrame:IsShown()) then return nil end
-  local saved={parent=bm:GetParent(),w=bm:GetWidth(),h=bm:GetHeight(),level=bm:GetFrameLevel(),shown=bm:IsShown(),points={},scripts={}}
+  local saved={parent=bm:GetParent(),w=bm:GetWidth(),h=bm:GetHeight(),level=bm:GetFrameLevel(),strata=bm:GetFrameStrata(),shown=bm:IsShown(),points={},scripts={}}
   local i,p,rel,rp,x,y
   for i=1,5 do p,rel,rp,x,y=bm:GetPoint(i); if p then table.insert(saved.points,{p,rel,rp,x,y}) end end
   for i=1,table.getn(MODEL_SCRIPTS) do saved.scripts[MODEL_SCRIPTS[i]]=bm:GetScript(MODEL_SCRIPTS[i]) end
   saved.mouse=bm.IsMouseEnabled and bm:IsMouseEnabled(); saved.wheel=bm.IsMouseWheelEnabled and bm:IsMouseWheelEnabled()
   self.borrowedModel=saved
-  bm:SetParent(self.previewArea); bm:ClearAllPoints(); bm:SetAllPoints(self.previewArea); bm:SetFrameLevel(self.previewArea:GetFrameLevel()+2)
+  bm:SetParent(self.previewArea); bm:ClearAllPoints(); bm:SetAllPoints(self.previewArea)
+  -- Keep it in the planner's layer so the enchant/item windows draw (and click) above it.
+  bm:SetFrameStrata(self.frame:GetFrameStrata()); bm:SetFrameLevel(self.previewArea:GetFrameLevel()+2)
   ModelScripts(bm); bm:Show()
   return bm
 end
@@ -280,6 +294,7 @@ function AB:ReturnModel()
   bm:SetParent(s.parent); bm:ClearAllPoints()
   local i; for i=1,table.getn(s.points) do local p=s.points[i]; bm:SetPoint(p[1],p[2],p[3],p[4],p[5]) end
   if s.w and s.h then bm:SetWidth(s.w); bm:SetHeight(s.h) end
+  if s.strata then bm:SetFrameStrata(s.strata) end
   if s.level then bm:SetFrameLevel(s.level) end
   for i=1,table.getn(MODEL_SCRIPTS) do bm:SetScript(MODEL_SCRIPTS[i],s.scripts[MODEL_SCRIPTS[i]]) end
   bm:EnableMouse(s.mouse and true or false); if bm.EnableMouseWheel then bm:EnableMouseWheel(s.wheel and true or false) end
@@ -331,7 +346,8 @@ function AB:RefreshModel()
   if not area or not area:IsShown() then return end
   local m=self:BorrowModel()
   if m then self.ownModel:Hide() else m=self.ownModel; m:Show() end
-  if self.activeModel~=m or not area.unitLoaded then
+  if self.activeModel~=m then self.activeModel=m; self.previewArea.unitLoaded=false; self:UpdateModelMouse() end
+  if not area.unitLoaded then
     self.activeModel=m; area.unitLoaded=true; area.outfit=nil
     m:SetUnit("player")
     area.dressAt={GetTime()+0.1,GetTime()+0.6}
@@ -407,6 +423,17 @@ function AB:DressModel()
   self.previewArea.lastLink=links[1]; self.previewArea.lastError=err; self.previewArea.outfit=Outfit()
   m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
   self.previewArea.worn=table.getn(links)
+end
+
+-- The model takes the mouse for turning and zooming; while any other Ashen Builds
+-- window is open it lets go, so it can never swallow clicks meant for that window.
+function AB:UpdateModelMouse()
+  local m=self.activeModel
+  if not m then return end
+  local blocked,i,w=false,nil,nil
+  for i=1,table.getn(self.windows or {}) do w=self.windows[i]; if w~=self.frame and w:IsShown() then blocked=true end end
+  m:EnableMouse(not blocked); if m.EnableMouseWheel then m:EnableMouseWheel(not blocked) end
+  if blocked then self.previewArea.dragX=nil end
 end
 
 function AB:UpdateWeaponToggle()
