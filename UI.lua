@@ -290,12 +290,16 @@ function AB:DressModel()
   if not m or not self.previewArea:IsShown() then return end
   local undress=AshenBuildsDB.settings and AshenBuildsDB.settings.modelUndress
   if undress and m.Undress then m:Undress() end
-  local worn,i,id,link,_=0,nil,nil,nil,nil
+  local worn,i,id,link=0,nil,nil,nil
+  local first
   -- Main hand before off hand so a two-hander never clears the off hand afterwards.
+  -- Always the plain "item:ID:0:0:0" string Atlas passes to the Dressing Room: API
+  -- mods (ClassicAPI) can make GetItemInfo return a coloured link TryOn ignores.
   for i=1,table.getn(VISIBLE_SLOTS) do
     id=self.current.items[VISIBLE_SLOTS[i]]
-    if id then _,link=GetItemInfo(id); if link then m:TryOn(link); worn=worn+1 end end
+    if id then link="item:"..id..":0:0:0"; m:TryOn(link); worn=worn+1; first=first or link end
   end
+  self.previewArea.lastLink=first
   m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
   self.previewArea.worn=worn
 end

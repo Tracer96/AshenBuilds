@@ -704,7 +704,7 @@ eventFrame:SetScript("OnEvent",function()
           AshenBuilds:RefreshModel()
         else
           local a=AshenBuilds.previewArea
-          AB_Print("Model preview: "..((a and a:IsShown()) and "open" or "closed")..", using "..(AshenBuilds.borrowedModel and "the Dressing Room model" or "its own model")..", items put on last time: "..((a and a.worn) or 0)..".")
+          AB_Print("Model preview: "..((a and a:IsShown()) and "open" or "closed")..", using "..(AshenBuilds.borrowedModel and "the Dressing Room model" or "its own model")..", items put on last time: "..((a and a.worn) or 0)..((a and a.lastLink) and (" (e.g. "..a.lastLink..")") or "")..".")
         end
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
