@@ -625,6 +625,7 @@ eventFrame:SetScript("OnEvent",function()
       local arg=split and string.sub(msg,split+1) or ""
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
+      elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)

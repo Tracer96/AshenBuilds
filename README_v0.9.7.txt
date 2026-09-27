@@ -14,3 +14,5 @@ Ashen Builds v0.9.7
 - Top-bar tabs toggle: click to open, click again to close; opening one tab closes the others and
   the open tab's button stays lit. The Item Database tab switches a slot picker to all items.
 - Fixed edit boxes (item level range, stat minimums, prompts) drawing only their end caps.
+- Minimap button: left-click toggles the planner, right-click toggles Community Builds, drag to move
+  it around the minimap (position is saved). /ab minimap hides or shows it.
