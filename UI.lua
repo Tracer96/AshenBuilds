@@ -223,6 +223,12 @@ local function ModelScripts(m)
     if a.dragX then local x=GetCursorPosition(); a.facing=a.facing+(x-a.dragX)*0.015; a.dragX=x; this:SetFacing(a.facing) end
     -- Dressing waits for the model SetUnit started loading; see RefreshModel.
     if a.dressAt and GetTime()>=a.dressAt[1] then table.remove(a.dressAt,1); if table.getn(a.dressAt)==0 then a.dressAt=nil end; AB:DressModel() end
+    if a.loadUntil and GetTime()>=a.nextCheck then
+      a.nextCheck=GetTime()+0.5
+      local still=AB:MissingPreviewItems()
+      if table.getn(still)<a.waiting then AB:RefreshModel("loader")
+      elseif GetTime()>=a.loadUntil then a.loadUntil=nil; AB:RefreshModel("gaveup") end
+    end
   end)
 end
 
@@ -231,7 +237,7 @@ function AB:CreateModelPreview(parent)
   area:SetPoint("TOPLEFT",parent,"TOPLEFT",8,-32); area:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-8,30); area:Hide()
   area.facing=0; area.zoom=0
   local own=CreateFrame("DressUpModel","AshenBuildsPreviewModel",area); own:SetAllPoints(area); own:Hide(); ModelScripts(own); self.ownModel=own
-  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOM",parent,"BOTTOM",0,10); area.note:SetWidth(360)
+  area.note=parent:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); area.note:SetPoint("BOTTOMLEFT",parent,"BOTTOMLEFT",12,10); area.note:SetWidth(370); area.note:SetJustifyH("LEFT")
   local weapons=MakeButton(parent,"",110,20); self:SkinQuietButton(weapons); weapons:SetPoint("BOTTOMRIGHT",parent,"BOTTOMRIGHT",-10,6); weapons:Hide(); area.weaponToggle=weapons
   weapons:SetScript("OnClick",function()
     AshenBuildsDB.settings.modelRanged=not AshenBuildsDB.settings.modelRanged
@@ -282,7 +288,28 @@ end
 -- SetUnit loads the character model over the next frame or two, and anything
 -- tried on before it finishes is lost with the old model. So load first and
 -- dress a moment later, then once more in case the model was slow.
-function AB:RefreshModel()
+-- Planned, visible items the client hasn't cached yet (the Dressing Room can't show those).
+function AB:MissingPreviewItems()
+  local out,i,id={},nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=self.current.items[VISIBLE_SLOTS[i]]
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) and not GetItemInfo(id) then table.insert(out,id) end
+  end
+  return out
+end
+
+-- Asks the server for an item the same way hovering an unseen link does.
+local scanTip
+local function RequestItem(id)
+  if not scanTip then scanTip=CreateFrame("GameTooltip","AshenBuildsScanTooltip",UIParent,"GameTooltipTemplate") end
+  scanTip:SetOwner(UIParent,"ANCHOR_NONE"); scanTip:SetHyperlink("item:"..id..":0:0:0"); scanTip:Hide()
+end
+
+-- SetUnit loads the character model over the next frame or two, and anything
+-- tried on before it finishes is lost with the old model. So load first and
+-- dress a moment later, then once more in case the model was slow. Items the
+-- client hasn't cached are fetched and the model is re-dressed as they arrive.
+function AB:RefreshModel(reason)
   local area=self.previewArea
   if not area or not area:IsShown() then return end
   local m=self:BorrowModel()
@@ -290,12 +317,23 @@ function AB:RefreshModel()
   self.activeModel=m
   m:SetUnit("player")
   area.dressAt={GetTime()+0.1,GetTime()+0.6}
-  local missing,i,id=0,nil,nil
-  for i=1,table.getn(VISIBLE_SLOTS) do id=self.current.items[VISIBLE_SLOTS[i]]; if id and not SkipSlot(VISIBLE_SLOTS[i]) and not GetItemInfo(id) then missing=missing+1 end end
+  local missing=self:MissingPreviewItems()
+  local i
+  if table.getn(missing)>0 and reason~="gaveup" then
+    if reason~="loader" then
+      for i=1,table.getn(missing) do RequestItem(missing[i]) end
+      area.loadUntil=GetTime()+10
+    end
+    area.waiting=table.getn(missing); area.nextCheck=GetTime()+0.5
+  elseif table.getn(missing)==0 then
+    area.loadUntil=nil
+  end
   local notes={"Drag to turn, scroll to zoom."}
   local myRace=UnitRace("player")
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
-  if missing>0 then table.insert(notes,missing.." item"..(missing==1 and "" or "s").." not in your game cache yet - see "..(missing==1 and "it" or "them").." once in game to preview.") end
+  local n=table.getn(missing)
+  if n>0 and area.loadUntil then table.insert(notes,"Loading "..n.." item"..(n==1 and "" or "s").." from the server...")
+  elseif n>0 then table.insert(notes,n.." item"..(n==1 and "" or "s").." couldn't be loaded; your own gear shows there.") end
   area.note:SetText(table.concat(notes,"  "))
 end
 
