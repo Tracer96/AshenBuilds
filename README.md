@@ -23,6 +23,9 @@ Type `/ab` in game, or click the ember icon on the minimap.
   vmangos formulas that BetterCharacterStats reads back from the client: health and mana from stamina
   and intellect, level-scaled crit and dodge per agility, class base crit and dodge, 5% base parry and
   block, defense and weapon-skill bonuses, armor from agility, racials, and measurable talent effects.
+- Hover any total for a breakdown of where it comes from (base, gear, talents, racials).
+- **Model preview:** switch the center panel to a 3D model wearing the planned gear. Drag to turn,
+  scroll to zoom. It uses your own character's race, and only items your game client has cached.
 - **Saved builds** save automatically once saved the first time. Rename, delete, or use Save As to make
   a copy. Export and import builds as short codes, including talents.
 
@@ -117,6 +120,9 @@ open, click again to close.
 - Profanity filter for community build names.
 - Top-bar buttons toggle like tabs; new minimap button.
 - Fixed text boxes drawing only their end caps.
+- New look: ember window frames, tab strip, game empty-slot art, quality glows on icons, hover-only
+  enchant hints, dimmed zero stats, stat breakdown tooltips, collapsing set panel, fade-in windows,
+  and a 3D model preview.
 
 ### 0.9.6
 - Stat engine rebuilt on real vanilla base stats and vmangos formulas (fixes health, crit, dodge,
