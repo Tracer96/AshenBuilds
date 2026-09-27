@@ -702,6 +702,7 @@ eventFrame:SetScript("OnEvent",function()
         elseif arg=="undress" then
           AshenBuildsDB.settings.modelKeepGear=not AshenBuildsDB.settings.modelKeepGear
           AB_Print(AshenBuildsDB.settings.modelKeepGear and "Model preview now keeps your own gear in slots the plan leaves empty (one-hand weapons may land in the off hand)." or "Model preview now strips your own gear before putting the planned gear on.")
+          if AshenBuilds.previewArea then AshenBuilds.previewArea.unitLoaded=false end
           AshenBuilds:RefreshModel()
         else
           local a=AshenBuilds.previewArea

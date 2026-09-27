@@ -203,7 +203,7 @@ end
 ---------------------------------------------------------------------------
 -- Slots that change how the model looks.
 local VISIBLE_SLOTS={"HEAD","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET","MAINHAND","OFFHAND","RANGED"}
-local MODEL_SCRIPTS={"OnMouseDown","OnMouseUp","OnMouseWheel","OnUpdate"}
+local MODEL_SCRIPTS={"OnMouseDown","OnMouseUp","OnMouseWheel","OnUpdate","OnEvent"}
 -- The model holds either its melee weapons or its ranged weapon: trying on a bow
 -- replaces the main and off hand. Melee is shown by default; the toggle swaps.
 local function ShowRanged() return AshenBuildsDB.settings and AshenBuildsDB.settings.modelRanged end
@@ -215,6 +215,9 @@ end
 
 local function ModelScripts(m)
   m:EnableMouse(true); m:EnableMouseWheel(true)
+  -- The Dressing Room model reloads the player's real gear on model/inventory events,
+  -- which flashed the preview back to your own gear at random. Ignore them here.
+  m:SetScript("OnEvent",function() end)
   m:SetScript("OnMouseDown",function() AB.previewArea.dragX=GetCursorPosition() end)
   m:SetScript("OnMouseUp",function() AB.previewArea.dragX=nil end)
   m:SetScript("OnMouseWheel",function() local a=AB.previewArea; a.zoom=math.max(0,math.min(2.5,a.zoom+arg1*0.25)); this:SetPosition(a.zoom,0,0) end)
@@ -226,8 +229,8 @@ local function ModelScripts(m)
     if a.loadUntil and GetTime()>=a.nextCheck then
       a.nextCheck=GetTime()+0.5
       local still=AB:MissingPreviewItems()
-      if table.getn(still)<a.waiting then AB:RefreshModel("loader")
-      elseif GetTime()>=a.loadUntil then a.loadUntil=nil; AB:RefreshModel("gaveup") end
+      if table.getn(still)<a.waiting then a.waiting=table.getn(still); if a.waiting==0 then a.loadUntil=nil end; AB:DressModel(); AB:UpdatePreviewNote()
+      elseif GetTime()>=a.loadUntil then a.loadUntil=nil; AB:UpdatePreviewNote() end
     end
   end)
 end
@@ -283,11 +286,9 @@ function AB:ReturnModel()
   bm:SetFacing(0); bm:SetPosition(0,0,0)
   if not s.shown then bm:Hide() end
   if self.activeModel==bm then self.activeModel=nil end
+  self.previewArea.unitLoaded=false
 end
 
--- SetUnit loads the character model over the next frame or two, and anything
--- tried on before it finishes is lost with the old model. So load first and
--- dress a moment later, then once more in case the model was slow.
 -- Planned, visible items the client hasn't cached yet (the Dressing Room can't show those).
 function AB:MissingPreviewItems()
   local out,i,id={},nil,nil
@@ -305,33 +306,53 @@ local function RequestItem(id)
   scanTip:SetOwner(UIParent,"ANCHOR_NONE"); scanTip:SetHyperlink("item:"..id..":0:0:0"); scanTip:Hide()
 end
 
--- SetUnit loads the character model over the next frame or two, and anything
--- tried on before it finishes is lost with the old model. So load first and
--- dress a moment later, then once more in case the model was slow. Items the
--- client hasn't cached are fetched and the model is re-dressed as they arrive.
-function AB:RefreshModel(reason)
+-- What the model should be wearing; re-dressing only happens when this changes.
+local function Outfit()
+  local parts,i,id={},nil,nil
+  for i=1,table.getn(VISIBLE_SLOTS) do
+    id=AB.current.items[VISIBLE_SLOTS[i]]
+    if id and not SkipSlot(VISIBLE_SLOTS[i]) then table.insert(parts,VISIBLE_SLOTS[i].."="..id) end
+  end
+  local s=AshenBuildsDB.settings or {}
+  table.insert(parts,s.modelKeepGear and "keep" or "strip")
+  return table.concat(parts,";")
+end
+
+-- Keeps the preview smooth:
+--  * the character is loaded (SetUnit) only when the preview gets a model, since
+--    SetUnit shows your real gear until the planned gear goes back on;
+--  * SetUnit loads over the next frame or two, so the first dressing waits a moment
+--    and repeats once in case the model was slow;
+--  * after that, changes re-dress in a single step, and only when the visible gear
+--    actually changed (stat or enchant refreshes leave the model alone);
+--  * items the client hasn't cached are fetched and put on as they arrive.
+function AB:RefreshModel()
   local area=self.previewArea
   if not area or not area:IsShown() then return end
   local m=self:BorrowModel()
   if m then self.ownModel:Hide() else m=self.ownModel; m:Show() end
-  self.activeModel=m
-  m:SetUnit("player")
-  area.dressAt={GetTime()+0.1,GetTime()+0.6}
+  if self.activeModel~=m or not area.unitLoaded then
+    self.activeModel=m; area.unitLoaded=true; area.outfit=nil
+    m:SetUnit("player")
+    area.dressAt={GetTime()+0.1,GetTime()+0.6}
+  elseif not area.dressAt and area.outfit~=Outfit() then
+    self:DressModel()
+  end
   local missing=self:MissingPreviewItems()
   local i
-  if table.getn(missing)>0 and reason~="gaveup" then
-    if reason~="loader" then
-      for i=1,table.getn(missing) do RequestItem(missing[i]) end
-      area.loadUntil=GetTime()+10
-    end
-    area.waiting=table.getn(missing); area.nextCheck=GetTime()+0.5
-  elseif table.getn(missing)==0 then
-    area.loadUntil=nil
+  if table.getn(missing)>0 and not area.loadUntil and area.requested~=Outfit() then
+    for i=1,table.getn(missing) do RequestItem(missing[i]) end
+    area.requested=Outfit(); area.loadUntil=GetTime()+10; area.nextCheck=GetTime()+0.5; area.waiting=table.getn(missing)
   end
+  self:UpdatePreviewNote()
+end
+
+function AB:UpdatePreviewNote()
+  local area=self.previewArea
+  local n=table.getn(self:MissingPreviewItems())
   local notes={"Drag to turn, scroll to zoom."}
   local myRace=UnitRace("player")
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
-  local n=table.getn(missing)
   if n>0 and area.loadUntil then table.insert(notes,"Loading "..n.." item"..(n==1 and "" or "s").." from the server...")
   elseif n>0 then table.insert(notes,n.." item"..(n==1 and "" or "s").." couldn't be loaded; your own gear shows there.") end
   area.note:SetText(table.concat(notes,"  "))
@@ -383,7 +404,7 @@ function AB:DressModel()
   if not DressUpItemLink or not ok then
     for i=1,table.getn(links) do local _,_,n=string.find(links[i],"item:(%d+)"); m:TryOn(tonumber(n)) end
   end
-  self.previewArea.lastLink=links[1]; self.previewArea.lastError=err
+  self.previewArea.lastLink=links[1]; self.previewArea.lastError=err; self.previewArea.outfit=Outfit()
   m:SetFacing(self.previewArea.facing); m:SetPosition(self.previewArea.zoom,0,0)
   self.previewArea.worn=table.getn(links)
 end
@@ -396,7 +417,7 @@ function AB:SetStatsView(view)
   self.statsView=view
   local totals=view~="preview"
   if totals then
-    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea:Hide(); self.previewArea.note:Hide(); self.previewArea.weaponToggle:Hide()
+    self.statsCards:Show(); self:ReturnModel(); self.ownModel:Hide(); self.previewArea.unitLoaded=false; self.previewArea.dressAt=nil; self.previewArea:Hide(); self.previewArea.note:Hide(); self.previewArea.weaponToggle:Hide()
   else
     self.statsCards:Hide(); self.previewArea:Show(); self.previewArea.note:Show(); self:UpdateWeaponToggle(); self.previewArea.weaponToggle:Show()
   end
