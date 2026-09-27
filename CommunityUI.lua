@@ -35,7 +35,14 @@ AB.communitySort = AB.communitySort or "votes"
 AB.communityDesc = AB.communityDesc ~= false
 AB.communityPage = 1
 
+-- Builds with talents show their point split ("31/20/0") instead of the label.
+local function SpecText(e)
+  if e.talents and e.talents ~= "0/0/0" then return e.talents end
+  return e.spec or ""
+end
+
 local function SortValue(e, key)
+  if key == "spec" then return string.lower(SpecText(e)) end
   if key == "name" or key == "class" or key == "race" or key == "spec" then return string.lower(e[key] or "") end
   return tonumber(e[key]) or 0
 end
@@ -89,6 +96,13 @@ local function ShowRowTooltip(row)
   GameTooltip:AddLine("by " .. e.author, 0.85, 0.85, 0.85)
   local r, g, b = ClassColor(e.class)
   GameTooltip:AddLine("Level " .. e.level .. " " .. e.race .. " " .. e.class .. " - " .. e.spec, r, g, b)
+  local trees = AB.TREE_NAMES[AB.CLASS_TOKENS[e.class] or ""]
+  if e.talents and e.talents ~= "0/0/0" and trees then
+    local _, _, a, b2, c = string.find(e.talents, "^(%d+)/(%d+)/(%d+)$")
+    GameTooltip:AddLine("Talents: " .. trees[1] .. " " .. a .. " / " .. trees[2] .. " " .. b2 .. " / " .. trees[3] .. " " .. c, 0.85, 0.85, 0.85)
+  elseif not e.talents then
+    GameTooltip:AddLine("Published without talents.", 0.85, 0.85, 0.85)
+  end
   GameTooltip:AddLine(e.votes .. " upvote" .. (e.votes == 1 and "" or "s") .. "  -  published " .. date("%Y-%m-%d", e.ver), 0.85, 0.85, 0.85)
   if not e.confirmed then GameTooltip:AddLine("Passed along by another player; not yet seen from the author.", 1, 0.6, 0.3, 1) end
   GameTooltip:AddLine("Left-click to load into the planner.", 0.4, 1, 0.4)
@@ -202,7 +216,7 @@ function AB:RefreshCommunityList()
       row.name:SetText(e.name)
       row.author:SetText("by " .. e.author .. (e.mine and "  (you)" or ""))
       r, g, b = ClassColor(e.class); row.cells.class:SetText(e.class); row.cells.class:SetTextColor(r, g, b)
-      row.cells.race:SetText(e.race); row.cells.level:SetText(tostring(e.level)); row.cells.spec:SetText(e.spec)
+      row.cells.race:SetText(e.race); row.cells.level:SetText(tostring(e.level)); row.cells.spec:SetText(SpecText(e))
       if e.mine then
         row.vote:Hide(); row.votes:SetText(e.votes .. "  |cffbdb8adyours|r"); row.votes:SetTextColor(1, 1, 1)
       else

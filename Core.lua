@@ -88,7 +88,6 @@ local function AB_NewBuild(name)
   }
 end
 AshenBuilds.NewBuildData = AB_NewBuild
-AshenBuilds.Print = function(self,msg) AB_Print(msg) end
 
 function AshenBuilds:InitializeDB()
   if not AshenBuildsDB then AshenBuildsDB = {} end

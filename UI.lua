@@ -392,7 +392,7 @@ end
 function AB:ToggleStatFilter(key)
   local stats=self.itemFilter.stats; local i
   for i=1,table.getn(stats) do if stats[i][1]==key then table.remove(stats,i); self:SyncItemFilterControls(); self:QueueItemRefresh(0); return end end
-  if table.getn(stats)>=MAX_STAT_FILTERS then self:Print("You can filter on up to "..MAX_STAT_FILTERS.." stats at once."); return end
+  if table.getn(stats)>=MAX_STAT_FILTERS then self.Print("You can filter on up to "..MAX_STAT_FILTERS.." stats at once."); return end
   table.insert(stats,{key,0}); self:SyncItemFilterControls(); self:QueueItemRefresh(0)
 end
 
@@ -512,9 +512,9 @@ function AB:CreateEnchantBrowser()
 end
 
 function AB:OpenEnchantBrowser(slot)
-  if not AshenBuildsEnchantSlots[slot] then self:Print(self.SLOT_LABELS[slot].." can't be enchanted."); return end
+  if not AshenBuildsEnchantSlots[slot] then self.Print(self.SLOT_LABELS[slot].." can't be enchanted."); return end
   local item=self:GetItem(self.current.items[slot] or 0)
-  if not item then self:Print("Equip an item in "..self.SLOT_LABELS[slot].." before choosing an enchant."); return end
+  if not item then self.Print("Equip an item in "..self.SLOT_LABELS[slot].." before choosing an enchant."); return end
   self.enchantSlot=slot; self.enchantOffset=0; self.enchantMatches={}
   local i,id
   for i=1,table.getn(AshenBuildsEnchantOrder) do id=AshenBuildsEnchantOrder[i]; if self:IsEnchantAllowed(slot,id,item) then table.insert(self.enchantMatches,id) end end
