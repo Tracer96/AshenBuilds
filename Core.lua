@@ -1,5 +1,5 @@
 AshenBuilds = AshenBuilds or {}
-AshenBuilds.VERSION = "0.9.6"
+AshenBuilds.VERSION = "0.9.7"
 
 AshenBuilds.SLOTS = {
   "HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET",
@@ -31,7 +31,8 @@ AshenBuilds.STAT_LABELS = {
   natureRes="Nature Resist", shadowRes="Shadow Resist", arcaneRes="Arcane Resist",
   swordSkill="Sword Skill", axeSkill="Axe Skill", daggerSkill="Dagger Skill", maceSkill="Mace Skill", fistSkill="Fist Skill", polearmSkill="Polearm Skill", bowSkill="Bow Skill", gunSkill="Gun Skill", crossbowSkill="Crossbow Skill", thrownSkill="Thrown Skill",
   firePower="Fire Power", frostPower="Frost Power", naturePower="Nature Power", shadowPower="Shadow Power", arcanePower="Arcane Power", holyPower="Holy Power", spellPen="Spell Penetration", armorPen="Armor Penetration", haste="Haste",
-  rangedHit="Ranged Hit", health="Health", mana="Mana", feralAp="Feral Attack Power", blockValue="Block Value"
+  rangedHit="Ranged Hit", health="Health", mana="Mana", feralAp="Feral Attack Power", blockValue="Block Value",
+  rangedCrit="Ranged Crit", leech="Vampirism"
 }
 AshenBuilds.GEAR_STAT_ORDER = {
   "str","agi","sta","int","spi","armor","ap","rap","spellPower","healing","hit","spellHit","crit","spellCrit",
@@ -177,6 +178,7 @@ function AshenBuilds:IsEnchantAllowed(slot, enchantID, item)
   local e = AshenBuildsEnchants and AshenBuildsEnchants[enchantID]
   if not e or not e.slots[slot] then return false end
   if not item then return true end
+  if e.minIlvl and (item.ilvl or 0) < e.minIlvl then return false end
   if e.req == "shield" then return item.shield and true or false end
   if e.req == "twohand" then return (item.twoHand or item.slot == "TWOHAND") and true or false end
   if e.req == "weapon" then return item.itemClass == 2 end
@@ -313,6 +315,29 @@ function AshenBuilds:SaveBuild(name, saveAs)
   AB_Print("Saved |cffffffff"..name.."|r."); self:RefreshBuildList(); self:RefreshUI()
   if self.OnBuildSaved then self:OnBuildSaved(name) end
   return true
+end
+
+-- Writes the planner back into the saved build it came from, so edits to a saved
+-- build (gear, enchants, talents, class...) survive switching builds or logging
+-- out. Renaming and republishing still wait for an explicit Save.
+function AshenBuilds:AutoSave()
+  local name = self.current and self.current.savedName
+  if not name or not AshenBuildsDB.builds[name] then return end
+  local copy = self:DeepCopy(self.current); copy.savedName = nil; copy.name = name
+  AshenBuildsDB.builds[name] = copy
+end
+
+-- True when a build has anything worth keeping.
+function AshenBuilds:BuildHasContent(build)
+  if next(build.items or {}) or next(build.enchants or {}) then return true end
+  return next((build.talents and build.talents.points) or {}) and true or false
+end
+
+-- Runs fn now, or after a confirmation when it would throw away a never-saved build.
+function AshenBuilds:ConfirmDiscard(what, fn)
+  if self.current.savedName or not self:BuildHasContent(self.current) or not self.ShowPrompt then fn(); return true end
+  self:ShowPrompt({title="UNSAVED BUILD", text="Your current build hasn't been saved.\nDiscard it and load |cffffffff"..what.."|r?", accept="Discard", onAccept=fn})
+  return false
 end
 
 function AshenBuilds:RenameBuild(old, new)
@@ -614,7 +639,7 @@ local eventFrame=CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent",function()
   if event=="ADDON_LOADED" and arg1=="AshenBuilds" then
-    AshenBuilds:InitializeDB(); AshenBuilds:CreateUI()
+    AshenBuilds:InitializeDB(); AshenBuilds:CreateUI(); AshenBuilds:SetupTabs()
     SLASH_ASHENBUILDS1="/ab"; SLASH_ASHENBUILDS2="/ashenbuilds"
     SlashCmdList["ASHENBUILDS"]=function(msg)
       msg=string.lower(msg or "")
@@ -623,6 +648,7 @@ eventFrame:SetScript("OnEvent",function()
       local arg=split and string.sub(msg,split+1) or ""
       if cmd=="reset" then AshenBuilds.current=AB_NewBuild("New Build"); AshenBuildsDB.current=AshenBuilds.current; AshenBuilds:RefreshUI()
       elseif cmd=="importgear" then AshenBuilds:ImportEquipped()
+      elseif cmd=="minimap" then AshenBuilds:ToggleMinimapButton()
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)
