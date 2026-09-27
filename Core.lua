@@ -1,5 +1,5 @@
 AshenBuilds = AshenBuilds or {}
-AshenBuilds.VERSION = "0.9.6"
+AshenBuilds.VERSION = "0.9.7"
 
 AshenBuilds.SLOTS = {
   "HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET",
@@ -31,7 +31,8 @@ AshenBuilds.STAT_LABELS = {
   natureRes="Nature Resist", shadowRes="Shadow Resist", arcaneRes="Arcane Resist",
   swordSkill="Sword Skill", axeSkill="Axe Skill", daggerSkill="Dagger Skill", maceSkill="Mace Skill", fistSkill="Fist Skill", polearmSkill="Polearm Skill", bowSkill="Bow Skill", gunSkill="Gun Skill", crossbowSkill="Crossbow Skill", thrownSkill="Thrown Skill",
   firePower="Fire Power", frostPower="Frost Power", naturePower="Nature Power", shadowPower="Shadow Power", arcanePower="Arcane Power", holyPower="Holy Power", spellPen="Spell Penetration", armorPen="Armor Penetration", haste="Haste",
-  rangedHit="Ranged Hit", health="Health", mana="Mana", feralAp="Feral Attack Power", blockValue="Block Value"
+  rangedHit="Ranged Hit", health="Health", mana="Mana", feralAp="Feral Attack Power", blockValue="Block Value",
+  rangedCrit="Ranged Crit", leech="Vampirism"
 }
 AshenBuilds.GEAR_STAT_ORDER = {
   "str","agi","sta","int","spi","armor","ap","rap","spellPower","healing","hit","spellHit","crit","spellCrit",
@@ -177,6 +178,7 @@ function AshenBuilds:IsEnchantAllowed(slot, enchantID, item)
   local e = AshenBuildsEnchants and AshenBuildsEnchants[enchantID]
   if not e or not e.slots[slot] then return false end
   if not item then return true end
+  if e.minIlvl and (item.ilvl or 0) < e.minIlvl then return false end
   if e.req == "shield" then return item.shield and true or false end
   if e.req == "twohand" then return (item.twoHand or item.slot == "TWOHAND") and true or false end
   if e.req == "weapon" then return item.itemClass == 2 end
@@ -614,7 +616,7 @@ local eventFrame=CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent",function()
   if event=="ADDON_LOADED" and arg1=="AshenBuilds" then
-    AshenBuilds:InitializeDB(); AshenBuilds:CreateUI()
+    AshenBuilds:InitializeDB(); AshenBuilds:CreateUI(); AshenBuilds:SetupTabs()
     SLASH_ASHENBUILDS1="/ab"; SLASH_ASHENBUILDS2="/ashenbuilds"
     SlashCmdList["ASHENBUILDS"]=function(msg)
       msg=string.lower(msg or "")

@@ -129,7 +129,7 @@ function AB:CreatePromptDialog()
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.5); self:AddEmberHeader(f, 34)
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); f.title:SetPoint("TOP", f, "TOP", 0, -18)
   f.text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); f.text:SetPoint("TOP", f, "TOP", 0, -56); f.text:SetWidth(370)
-  local edit = CreateFrame("EditBox", nil, f, "InputBoxTemplate"); edit:SetWidth(340); edit:SetHeight(24); edit:SetPoint("TOP", f.text, "BOTTOM", 0, -8); edit:SetAutoFocus(false); edit:SetMaxLetters(60); f.edit = edit
+  local edit = CreateFrame("EditBox", "AshenBuildsPromptEdit", f, "InputBoxTemplate"); edit:SetWidth(340); edit:SetHeight(24); edit:SetPoint("TOP", f.text, "BOTTOM", 0, -8); edit:SetAutoFocus(false); edit:SetMaxLetters(60); f.edit = edit
   local accept = CreateFrame("Button", nil, f, "UIPanelButtonTemplate"); accept:SetWidth(100); accept:SetHeight(24); accept:SetPoint("BOTTOMRIGHT", f, "BOTTOM", -5, 18); self:SkinButton(accept, "ember"); f.accept = accept
   local cancel = CreateFrame("Button", nil, f, "UIPanelButtonTemplate"); cancel:SetWidth(100); cancel:SetHeight(24); cancel:SetPoint("BOTTOMLEFT", f, "BOTTOM", 5, 18); cancel:SetText("Cancel"); self:SkinButton(cancel, "ember")
   cancel:SetScript("OnClick", function() f:Hide() end)

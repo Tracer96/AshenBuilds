@@ -16,8 +16,11 @@ local AB = AshenBuilds
 --   U~ver~name               author withdraws a build
 --   V~author~name~1|0~ts     sender upvotes (1) or removes their upvote (0)
 --   Y~author~name~1|0~ts[~author~name~1|0~ts...]  sender repeats their own votes
---   Q                        sender just came online and wants the catalog
---   R~requester              sender is answering requester's Q (others stand down)
+--   Q~n~v~h                  sender wants the catalog; n/v/h digest what they already know
+--                            (builds, vote records, order-independent hash). Peers whose
+--                            digest matches stay quiet. A bare "Q" (0.9.x) means "unknown".
+--   R~requester~score        sender is answering requester's Q; peers who know no more
+--                            than score (builds + vote records) stand down
 --   F~author~ver~name~code~sum  relayed copy of someone else's build
 -- "sum" is a checksum of name+code: if a message is altered in transit (e.g.
 -- cross-faction language scrambling) the build is dropped instead of loading
@@ -37,7 +40,8 @@ local MARK = "~ASHB1~"
 local SEND_INTERVAL = 1.1      -- seconds between outgoing messages (chat throttle safety)
 local QUERY_COOLDOWN = 120     -- minimum seconds between our own sync requests
 local ANNOUNCE_COOLDOWN = 60   -- minimum seconds between re-announcing our own builds
-local RELAY_COOLDOWN = 600     -- minimum seconds between relays we perform
+local RELAY_COOLDOWN = 120     -- minimum seconds between relays we perform
+local RELAY_BUSY = 40          -- don't start a relay while this many messages are still queued
 local RELAY_LIMIT = 60         -- builds relayed per answer
 local MAX_BUILDS = 1000
 local MAX_VOTERS = 500
@@ -45,6 +49,8 @@ local EXPIRE = 60 * 86400      -- forget builds nobody has mentioned for 60 days
 local MAX_NAME = 32
 local MAX_CLOCK_SKEW = 86400
 local CHUNK = 180              -- payload budget for batched vote messages
+local RESYNC_INTERVAL = 1200   -- re-compare catalogs with the realm every 20 minutes
+local RETRY_INTERVAL = 180     -- ...or every 3 minutes until someone has answered us
 
 local Enc, Dec = AB.EncodeNumber, AB.DecodeNumber
 local MAX_QUEUE = 300
@@ -70,11 +76,13 @@ local function Split(msg)
   end
 end
 
-local function Checksum(name, code)
-  local text, sum, i = name .. "~" .. code, 0, nil
+local function Hash(text)
+  local sum, i = 0, nil
   for i = 1, string.len(text) do sum = math.mod(sum * 31 + string.byte(text, i), 16777213) end
-  return Enc(sum)
+  return sum
 end
+
+local function Checksum(name, code) return Enc(Hash(name .. "~" .. code)) end
 
 local function BuildId(author, name) return author .. ":" .. name end
 
@@ -88,7 +96,10 @@ end
 
 local function CountKeys(t) local n = 0; local k; for k in pairs(t or {}) do n = n + 1 end; return n end
 
+local digest -- cached {n, v, h}; nil whenever the catalog changes
+
 local function RefreshViews()
+  digest = nil
   if AB.RefreshCommunityList then AB:RefreshCommunityList() end
   if AB.RefreshBuildList then AB:RefreshBuildList() end
 end
@@ -180,6 +191,7 @@ local function SetVote(id, voter, on, t)
   if r and r.t >= t then return false end
   if not r and CountKeys(v) >= MAX_VOTERS then return false end
   v[voter] = {on = on and true or false, t = t}
+  digest = nil
   return true
 end
 
@@ -187,6 +199,27 @@ local function SplitId(id)
   local pos = string.find(id, ":", 1, true)
   return string.sub(id, 1, pos - 1), string.sub(id, pos + 1)
 end
+
+-- Order-independent summary of the whole catalog: how many builds and vote
+-- records we hold, plus a hash of their versions. Two players with the same
+-- digest have nothing to tell each other.
+local function Digest()
+  if digest then return digest end
+  local c, n, v, h, id, e, votes, voter, r = DB(), 0, 0, 0, nil, nil, nil, nil, nil
+  for id, e in pairs(c.builds) do
+    n = n + 1; h = math.mod(h + Hash(id .. "~" .. e.ver), 16777213)
+  end
+  for id, votes in pairs(c.votes) do
+    for voter, r in pairs(votes) do
+      if type(r) == "table" then
+        v = v + 1; h = math.mod(h + Hash(id .. "~" .. voter .. "~" .. (r.on and "1" or "0") .. "~" .. r.t), 16777213)
+      end
+    end
+  end
+  digest = {n = n, v = v, h = h}
+  return digest
+end
+local function Knowledge(d) return d.n + d.v end
 
 local function PruneCatalog()
   local c, cutoff, id, e = DB(), Now() - EXPIRE, nil, nil
@@ -223,6 +256,10 @@ function AB:PublishBuild(name)
   local wire = Clean(name)
   if wire ~= name then
     self.Print("Build names used for publishing can't contain ~ | or commas, or exceed " .. MAX_NAME .. " characters. Rename the build and save it again.")
+    return
+  end
+  if self:IsProfane(name) then
+    self.Print("That build name contains language that isn't allowed in community builds. Rename it and publish again.")
     return
   end
   local c, me = DB(), Me()
@@ -285,9 +322,9 @@ end
 function AB:LoadCommunityBuild(id)
   local e = DB().builds[id]; if not e then return end
   local build = self:DecodeBuild(e.code); if not build then return end
-  build.name = e.name .. " (" .. e.author .. ")"
+  build.name = self:MaskProfanity(e.name) .. " (" .. e.author .. ")"
   self.current = build; AshenBuildsDB.current = build; self:RefreshUI()
-  self.Print("Loaded |cffffffff" .. e.name .. "|r by " .. e.author .. ". Save it to keep a copy.")
+  self.Print("Loaded |cffffffff" .. self:MaskProfanity(e.name) .. "|r by " .. e.author .. ". Save it to keep a copy.")
 end
 
 ---------------------------------------------------------------------------
@@ -295,13 +332,16 @@ end
 ---------------------------------------------------------------------------
 -- Start far in the past: GetTime() counts from computer boot, so it can be small.
 local NEVER = -1e9
+local relayScore
+local answered = false  -- has anyone answered one of our sync requests this session?
 local lastQuery, lastAnnounce, lastRelay = NEVER, NEVER, NEVER
 
 function AB:RequestCommunitySync(force)
   local now = GetTime()
   if not force and now - lastQuery < QUERY_COOLDOWN then return false end
   lastQuery = now
-  Send("Q")
+  local d = Digest()
+  Send("Q~" .. Enc(d.n) .. "~" .. Enc(d.v) .. "~" .. Enc(d.h))
   return true
 end
 
@@ -338,9 +378,10 @@ end
 
 local function Relay(requester)
   lastRelay = GetTime()
+  local score = Knowledge(Digest())
   local list, me, i, e, v, r, chunk, item = AB:GetCommunityBuilds(), Me(), nil, nil, nil, nil, nil, nil
   table.sort(list, function(a, b) if a.votes ~= b.votes then return a.votes > b.votes end return a.seen > b.seen end)
-  Send("R~" .. requester)
+  Send("R~" .. requester .. "~" .. Enc(score))
   local sent = 0
   for i = 1, table.getn(list) do
     e = list[i]
@@ -402,13 +443,26 @@ function AB:HandleCommunityMessage(sender, msg)
     end
     if changed then RefreshViews() end
   elseif kind == "Q" then
+    local mine = Digest()
+    local theirs = f[4] and {n = Dec(f[2]) or 0, v = Dec(f[3]) or 0, h = Dec(f[4])}
+    -- Same catalog on both sides: nothing to say.
+    -- (Hearing a matching digest also proves we are in sync, so our own retries can relax.)
+    if theirs and theirs.n == mine.n and theirs.v == mine.v and theirs.h == mine.h then answered = true; return end
     After(1 + math.random() * 3, "announce", AnnounceAllOwn)
-    if GetTime() - lastRelay >= RELAY_COOLDOWN and CountKeys(DB().builds) > 0 then
-      -- Random delay so one player answers; everyone else hears the R and stands down.
-      After(3 + math.random() * 9, "relay", function() Relay(sender) end)
+    -- They know things we don't: ask for their copy too, so knowledge flows both ways.
+    if theirs and Knowledge(theirs) > Knowledge(mine) then After(15 + math.random() * 15, "pull", function() AB:RequestCommunitySync() end) end
+    if GetTime() - lastRelay >= RELAY_COOLDOWN and mine.n > 0 and table.getn(queue) < RELAY_BUSY then
+      -- The best-informed player answers first; anyone who knows less waits longer
+      -- and stands down when they hear that answer.
+      local behind = theirs and Knowledge(mine) <= Knowledge(theirs)
+      relayScore = Knowledge(mine)
+      After(2 + math.random() * 4 + (behind and 8 or 0), "relay", function() Relay(sender) end)
     end
   elseif kind == "R" then
-    Cancel("relay")
+    if f[2] == Me() then answered = true end
+    -- Stand down only for someone who knows at least as much as we do (0.9.x sends no score).
+    local score = f[3] and Dec(f[3])
+    if not score or score >= (relayScore or 0) then Cancel("relay") end
   end
 end
 
@@ -444,6 +498,12 @@ local function HideFromChat()
   end
 end
 
+-- Keeps long sessions converged: an unchanged catalog costs one short message.
+local function PeriodicSync()
+  AB:RequestCommunitySync(true)
+  After(answered and RESYNC_INTERVAL or RETRY_INTERVAL, "resync", PeriodicSync)
+end
+
 local joinAttempts = 0
 local function EnsureChannel()
   HideFromChat()
@@ -451,12 +511,14 @@ local function EnsureChannel()
     HideFromChat()
     AB:RequestCommunitySync(true)
     After(5, "announce", AnnounceAllOwn)
+    After(RETRY_INTERVAL, "resync", PeriodicSync)
     return
   end
   joinAttempts = joinAttempts + 1
   if joinAttempts > 5 then
     -- Guild/party sync still works without the channel.
     AB:RequestCommunitySync(true)
+    After(RETRY_INTERVAL, "resync", PeriodicSync)
     return
   end
   JoinChannelByName(CHANNEL)

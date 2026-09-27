@@ -92,7 +92,7 @@ end
 local function ShowRowTooltip(row)
   local e = row.entry; if not e then return end
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-  GameTooltip:SetText(e.name, 1, 0.82, 0.28)
+  GameTooltip:SetText(AB:MaskProfanity(e.name), 1, 0.82, 0.28)
   GameTooltip:AddLine("by " .. e.author, 0.85, 0.85, 0.85)
   local r, g, b = ClassColor(e.class)
   GameTooltip:AddLine("Level " .. e.level .. " " .. e.race .. " " .. e.class .. " - " .. e.spec, r, g, b)
@@ -213,7 +213,7 @@ function AB:RefreshCommunityList()
   for i = 1, ROWS do
     row = self.communityRows[i]; e = list[(self.communityPage - 1) * ROWS + i]; row.entry = e
     if e then
-      row.name:SetText(e.name)
+      row.name:SetText(AB:MaskProfanity(e.name))
       row.author:SetText("by " .. e.author .. (e.mine and "  (you)" or ""))
       r, g, b = ClassColor(e.class); row.cells.class:SetText(e.class); row.cells.class:SetTextColor(r, g, b)
       row.cells.race:SetText(e.race); row.cells.level:SetText(tostring(e.level)); row.cells.spec:SetText(SpecText(e))
