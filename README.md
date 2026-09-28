@@ -48,6 +48,22 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - All 27 Turtle WoW talent trees with full descriptions, rank limits, row requirements and prerequisites.
 - Talents that change the character sheet are applied to your totals.
 
+### DPS simulator (Warrior)
+- Click **SIM DPS** under the trinket slots. A progress bar fills while the fights run (spread over
+  frames, so the game never freezes). Then the average DPS and its 95% confidence range appear.
+- Hover the result for the full breakdown: damage by ability, attack table, rage generated, spent and
+  wasted, casts, procs and buff uptimes. Shift-click it for one fight's combat log.
+- The gear button next to SIM DPS holds the settings for each class: fight length, target level and
+  armor, position, number of targets, iterations, reaction time, rotation preset, Heroic Strike rage
+  threshold, raid buffs, consumables and target debuffs.
+- Every fight uses a fixed seed, so re-simming after a gear change compares the same fights and the
+  tooltip shows the exact DPS change.
+- **Accuracy** is HIGH only when every equipped effect is simulated. Anything that isn't (on-use
+  trinkets, unusual set bonuses, Revenge/Shield Slam) is listed as *SIM EFFECT NOT IMPLEMENTED* and
+  the result is marked PARTIAL.
+- Mechanics come from Turtle's server data where possible and otherwise from the maintained Turtle
+  WarriorSim. The combat log window lists the source and status of each one.
+
 ### Community builds
 - Publish a saved build and every player on the realm running Ashen Builds can see, load and upvote it.
 - Builds and votes are shared player-to-player over a hidden realm channel plus guild, party and raid.
@@ -79,6 +95,9 @@ open, click again to close.
 | `/ab importgear` | Load the gear you are wearing into the planner |
 | `/ab minimap` | Hide or show the minimap button |
 | `/ab reset` | Start a fresh build |
+| `/ab sim` | Simulate the current build |
+| `/ab sim settings` | Open the simulator settings |
+| `/ab sim log` | One fight's combat log from the last run |
 | `/ab debug` | Show loaded item, set and source counts |
 | `/ab debugset <itemID>` | Show how an item's set is resolved |
 
@@ -107,6 +126,10 @@ open, click again to close.
 | `Community.lua`, `CommunityUI.lua` | Build sharing and voting, community window |
 | `Profanity.lua` | Build name filter |
 | `Minimap.lua` | Minimap button |
+| `Sim/SimCore.lua` | Shared simulation engine: seeded RNG, event queue, auras, results, frame-spread runner |
+| `Sim/SimItems.lua` | Chance-on-hit item and enchant effects shared by melee classes |
+| `Sim/SimWarrior.lua` | Warrior character bridge, attack table, rage, abilities, rotations |
+| `Sim/SimUI.lua` | SIM DPS button, result tooltip, settings and combat log windows |
 | `Data/` | Item database, sets, enchants, base stats, talents |
 
 ## Changelog

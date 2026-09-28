@@ -102,11 +102,11 @@ AshenBuildsBaseStats = {
   canParry = {Warrior=true, Paladin=true, Hunter=true, Rogue=true},
   canBlock = {Warrior=true, Paladin=true, Shaman=true},
   racialWeaponSkill = {
-    Human={Sword=5,TwoHandSword=5,Mace=5,TwoHandMace=5},
-    Orc={Axe=5,TwoHandAxe=5},
-    Dwarf={Gun=5},
-    Troll={Bow=5,Thrown=5},
-    HighElf={Bow=5},
-    Goblin={Dagger=5,Mace=5},
+    Human={Sword=3,TwoHandSword=3,Mace=3,TwoHandMace=3},
+    Orc={Axe=3,TwoHandAxe=3},
+    Dwarf={Gun=3},
+    Troll={Bow=3,Thrown=3},
+    HighElf={Bow=3},
+    Goblin={Dagger=3,Mace=3},
   },
 }
