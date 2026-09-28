@@ -117,6 +117,13 @@ function AshenBuilds:InitializeDB()
 end
 
 function AshenBuilds:MigrateBuild(build)
+  -- Builds saved on a non-English client before 1.0 hold the player's localized
+  -- class and race ("Krieger", "Mensch"); the client gives us both names, so those
+  -- are switched to English here.
+  local cLocal, cToken = UnitClass("player")
+  if build.class and not self.SPECS[build.class] and build.class == cLocal and CLASS_BY_TOKEN[cToken or ""] then build.class = CLASS_BY_TOKEN[cToken] end
+  local rLocal, rToken = UnitRace("player")
+  if build.race and build.race == rLocal and RACE_BY_TOKEN[rToken or ""] then build.race = RACE_BY_TOKEN[rToken] end
   if not build.class or not self.SPECS[build.class] then build.class = "Warrior" end
   if not build.race then build.race = "Human" end
   build.level = AB_ValidLevel(build.level)
