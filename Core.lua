@@ -1,5 +1,5 @@
 AshenBuilds = AshenBuilds or {}
-AshenBuilds.VERSION = "0.9.7"
+AshenBuilds.VERSION = "1.0.0"
 
 AshenBuilds.SLOTS = {
   "HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST","HANDS","WAIST","LEGS","FEET",
@@ -55,10 +55,23 @@ local function AB_IndexOf(list, value)
 end
 AshenBuilds.IndexOf = AB_IndexOf
 
+-- UnitClass/UnitRace return the client's language first ("Krieger", "Mensch");
+-- the second value is the English token, which is what builds store.
+local CLASS_BY_TOKEN = {WARRIOR="Warrior", PALADIN="Paladin", HUNTER="Hunter", ROGUE="Rogue", PRIEST="Priest",
+  SHAMAN="Shaman", MAGE="Mage", WARLOCK="Warlock", DRUID="Druid"}
+local RACE_BY_TOKEN = {Human="Human", Dwarf="Dwarf", NightElf="Night Elf", Gnome="Gnome", Orc="Orc", Tauren="Tauren",
+  Troll="Troll", Scourge="Undead", Undead="Undead", HighElf="High Elf", BloodElf="High Elf", Goblin="Goblin"}
+
 local function AB_PlayerClass()
   local localized, token = UnitClass("player")
-  return localized or token or "Warrior"
+  return CLASS_BY_TOKEN[token or ""] or localized or "Warrior"
 end
+
+local function AB_PlayerRace()
+  local localized, token = UnitRace("player")
+  return RACE_BY_TOKEN[token or ""] or localized or "Human"
+end
+AshenBuilds.PlayerRace = AB_PlayerRace
 
 local function AB_ValidLevel(value)
   value = tonumber(value)
@@ -77,7 +90,7 @@ local function AB_NewBuild(name)
   return {
     name = name or "New Build",
     class = class,
-    race = UnitRace("player") or "Human",
+    race = AB_PlayerRace(),
     level = AB_PlayerLevel(),
     spec = AshenBuilds.SPECS[class][1],
     notes = "",
@@ -286,7 +299,7 @@ function AshenBuilds:ImportEquipped()
       if id and self:GetItem(id) then self.current.items[slot]=id; found=found+1 else missing=missing+1 end
     else self.current.items[slot]=nil end
   end
-  self.current.class=AB_PlayerClass(); self.current.race=UnitRace("player") or self.current.race; self.current.level=AB_PlayerLevel()
+  self.current.class=AB_PlayerClass(); self.current.race=AB_PlayerRace(); self.current.level=AB_PlayerLevel()
   self.current.updated=time(); self:RefreshUI()
   AB_Print("Imported "..found.." database items. "..missing.." equipped items are not in the current data pack.")
 end
@@ -708,6 +721,14 @@ eventFrame:SetScript("OnEvent",function()
           local a=AshenBuilds.previewArea
           AB_Print("Model preview: "..((a and a:IsShown()) and "open" or "closed")..", using "..(AshenBuilds.borrowedModel and "the Dressing Room model" or "its own model")..", items put on last time: "..((a and a.worn) or 0)..((a and a.lastLink) and (" (e.g. "..a.lastLink..")") or "")..".")
         end
+      elseif cmd=="sync" then
+        if arg=="off" then AshenBuilds:SetChannelSync(false)
+        elseif arg=="on" then AshenBuilds:SetChannelSync(true)
+        else AB_Print("Community sync over the realm channel is "..(AshenBuilds:IsChannelSyncOn() and "on" or "off")..". /ab sync off uses guild and party only.") end
+      elseif cmd=="unhide" then
+        local hidden=AshenBuilds:HiddenAuthors(); local key=string.lower(arg or "")
+        if hidden[key] then local n=hidden[key]; AshenBuilds:HideAuthor(n,false); AB_Print("Showing builds from "..n.." again.")
+        else AB_Print("Usage: /ab unhide <player>. Hidden players: "..(function() local t,k,v={} for k,v in pairs(hidden) do table.insert(t,v) end return table.getn(t)>0 and table.concat(t,", ") or "none" end)()) end
       elseif cmd=="community" then if not AshenBuilds.frame:IsShown() then AshenBuilds:ToggleUI() end; AshenBuilds:OpenCommunity()
       elseif cmd=="debugset" then
         local itemId=tonumber(arg)

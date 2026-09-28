@@ -16,9 +16,10 @@ local AB = AshenBuilds
 --   U~ver~name               author withdraws a build
 --   V~author~name~1|0~ts     sender upvotes (1) or removes their upvote (0)
 --   Y~author~name~1|0~ts[~author~name~1|0~ts...]  sender repeats their own votes
---   Q~n~v~h                  sender wants the catalog; n/v/h digest what they already know
+--   Q~n~v~h~version          sender wants the catalog; n/v/h digest what they already know
 --                            (builds, vote records, order-independent hash). Peers whose
 --                            digest matches stay quiet. A bare "Q" (0.9.x) means "unknown".
+--                            version (1.0+) lets older clients tell their player to update.
 --   R~requester~score        sender is answering requester's Q; peers who know no more
 --                            than score (builds + vote records) stand down
 --   F~author~ver~name~code~sum  relayed copy of someone else's build
@@ -39,8 +40,10 @@ local CHANNEL = "AshenBuilds"
 local MARK = "~ASHB1~"
 local SEND_INTERVAL = 1.1      -- seconds between outgoing messages (chat throttle safety)
 local QUERY_COOLDOWN = 120     -- minimum seconds between our own sync requests
-local ANNOUNCE_COOLDOWN = 60   -- minimum seconds between re-announcing our own builds
-local RELAY_COOLDOWN = 120     -- minimum seconds between relays we perform
+-- Traffic scales with everyone online, so re-sending is rare and randomly spread:
+-- relays by the best-informed players already cover anyone who logs in late.
+local ANNOUNCE_COOLDOWN = 900  -- minimum seconds between re-announcing our own builds
+local RELAY_COOLDOWN = 600     -- minimum seconds between relays we perform
 local RELAY_BUSY = 40          -- don't start a relay while this many messages are still queued
 local RELAY_LIMIT = 60         -- builds relayed per answer
 local MAX_BUILDS = 1000
@@ -113,9 +116,27 @@ local clock = CreateFrame("Frame")
 local function After(delay, key, fn)
   timers[key] = {at = GetTime() + delay, fn = fn}
 end
+
+-- Version compare for "1.2.3" strings: returns true when a is newer than b.
+local function Newer(a, b)
+  local function Parts(v) local t, n = {}, nil; for n in string.gfind(tostring(v or ""), "%d+") do table.insert(t, tonumber(n)) end; return t end
+  local x, y, i = Parts(a), Parts(b), nil
+  for i = 1, math.max(table.getn(x), table.getn(y)) do
+    local p, q = x[i] or 0, y[i] or 0
+    if p ~= q then return p > q end
+  end
+  return false
+end
+local updateNoticeShown = false
 local function Cancel(key) timers[key] = nil end
 
+local function ChannelEnabled()
+  local s = AshenBuildsDB and AshenBuildsDB.settings
+  return not (s and s.syncChannel == false)
+end
+
 local function ChannelId()
+  if not ChannelEnabled() then return 0 end
   local id = GetChannelName(CHANNEL)
   return tonumber(id) or 0
 end
@@ -135,7 +156,7 @@ clock:SetScript("OnUpdate", function()
   -- while iterating with pairs is undefined in Lua 5.0.
   local now, due, key, t, i = GetTime(), {}, nil, nil, nil
   for key, t in pairs(timers) do if now >= t.at then table.insert(due, key) end end
-  for i = 1, table.getn(due) do t = timers[due[i]]; timers[due[i]] = nil; if t then t.fn() end end
+  for i = 1, table.getn(due) do t = timers[due[i]]; timers[due[i]] = nil; if t then pcall(t.fn) end end
   sinceSend = sinceSend + arg1
   if sinceSend >= SEND_INTERVAL and table.getn(queue) > 0 then
     sinceSend = 0
@@ -341,7 +362,7 @@ function AB:RequestCommunitySync(force)
   if not force and now - lastQuery < QUERY_COOLDOWN then return false end
   lastQuery = now
   local d = Digest()
-  Send("Q~" .. Enc(d.n) .. "~" .. Enc(d.v) .. "~" .. Enc(d.h))
+  Send("Q~" .. Enc(d.n) .. "~" .. Enc(d.v) .. "~" .. Enc(d.h) .. "~" .. (AB.VERSION or "0"))
   return true
 end
 
@@ -443,12 +464,16 @@ function AB:HandleCommunityMessage(sender, msg)
     end
     if changed then RefreshViews() end
   elseif kind == "Q" then
+    if f[5] and not updateNoticeShown and Newer(f[5], AB.VERSION) then
+      updateNoticeShown = true
+      if AB.Print then AB.Print("A newer Ashen Builds (" .. string.sub(f[5], 1, 12) .. ") is available. Update to keep seeing every community build.") end
+    end
     local mine = Digest()
     local theirs = f[4] and {n = Dec(f[2]) or 0, v = Dec(f[3]) or 0, h = Dec(f[4])}
     -- Same catalog on both sides: nothing to say.
     -- (Hearing a matching digest also proves we are in sync, so our own retries can relax.)
     if theirs and theirs.n == mine.n and theirs.v == mine.v and theirs.h == mine.h then answered = true; return end
-    After(1 + math.random() * 3, "announce", AnnounceAllOwn)
+    After(5 + math.random() * 55, "announce", AnnounceAllOwn)
     -- They know things we don't: ask for their copy too, so knowledge flows both ways.
     if theirs and Knowledge(theirs) > Knowledge(mine) then After(15 + math.random() * 15, "pull", function() AB:RequestCommunitySync() end) end
     if GetTime() - lastRelay >= RELAY_COOLDOWN and mine.n > 0 and table.getn(queue) < RELAY_BUSY then
@@ -456,7 +481,7 @@ function AB:HandleCommunityMessage(sender, msg)
       -- and stands down when they hear that answer.
       local behind = theirs and Knowledge(mine) <= Knowledge(theirs)
       relayScore = Knowledge(mine)
-      After(2 + math.random() * 4 + (behind and 8 or 0), "relay", function() Relay(sender) end)
+      After(3 + math.random() * 12 + (behind and 20 or 0), "relay", function() Relay(sender) end)
     end
   elseif kind == "R" then
     if f[2] == Me() then answered = true end
@@ -506,6 +531,13 @@ end
 
 local joinAttempts = 0
 local function EnsureChannel()
+  if not ChannelEnabled() then
+    -- Guild/party sync only.
+    AB:RequestCommunitySync(true)
+    After(5, "announce", AnnounceAllOwn)
+    After(RETRY_INTERVAL, "resync", PeriodicSync)
+    return
+  end
   HideFromChat()
   if ChannelId() > 0 then
     HideFromChat()
@@ -537,10 +569,12 @@ events:SetScript("OnEvent", function()
     -- Joining late keeps General/Trade on their usual channel numbers.
     if not events.started then events.started = true; After(8, "join", EnsureChannel) end
   elseif event == "CHAT_MSG_ADDON" then
-    if arg1 == PREFIX then AB:HandleCommunityMessage(arg4, arg2) end
+    -- Messages come from other players' clients, so a bad one is dropped silently
+    -- instead of raising a Lua error for everyone who receives it.
+    if arg1 == PREFIX then pcall(AB.HandleCommunityMessage, AB, arg4, arg2) end
   elseif event == "CHAT_MSG_CHANNEL" then
-    if IsOurChannel(arg9, arg4) and type(arg1) == "string" and string.sub(arg1, 1, string.len(MARK)) == MARK then
-      AB:HandleCommunityMessage(arg2, string.sub(arg1, string.len(MARK) + 1))
+    if ChannelEnabled() and IsOurChannel(arg9, arg4) and type(arg1) == "string" and string.sub(arg1, 1, string.len(MARK)) == MARK then
+      pcall(AB.HandleCommunityMessage, AB, arg2, string.sub(arg1, string.len(MARK) + 1))
     end
   end
 end)
@@ -548,3 +582,19 @@ end)
 function AB:GetCommunityStatus()
   return ChannelId() > 0, IsInGuild() and true or false, CountKeys(DB().builds)
 end
+
+-- /ab sync on|off: use the hidden realm channel, or sync over guild/party only
+-- (1.12 allows only ten chat channels).
+function AB:SetChannelSync(on)
+  AshenBuildsDB.settings = AshenBuildsDB.settings or {}
+  AshenBuildsDB.settings.syncChannel = on and true or false
+  if on then
+    joinAttempts = 0
+    EnsureChannel()
+    self.Print("Community sync uses the realm channel (" .. CHANNEL .. ") plus guild and party.")
+  else
+    if GetChannelName(CHANNEL) and (tonumber(GetChannelName(CHANNEL)) or 0) > 0 then LeaveChannelByName(CHANNEL) end
+    self.Print("Community sync now uses guild and party only. /ab sync on to rejoin the realm channel.")
+  end
+end
+function AB:IsChannelSyncOn() return ChannelEnabled() end

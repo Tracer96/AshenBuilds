@@ -663,9 +663,5 @@ do
     },
   }
 
-  _G.TalentedTooltipData = _G.TalentedTooltipData or {}
-  _G.TalentedTooltipData[class] = spelldata
-  _G.TalentedDataOverride = _G.TalentedDataOverride or {spelldata = {}, tabdata = {}}
-  _G.TalentedDataOverride.spelldata = _G.TalentedDataOverride.spelldata or {}
-  _G.TalentedDataOverride.spelldata[class] = spelldata
+  AshenBuildsTalentData[class] = spelldata
 end

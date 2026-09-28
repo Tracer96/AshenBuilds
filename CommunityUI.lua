@@ -58,13 +58,30 @@ local function Compare(a, b)
   return a.id < b.id
 end
 
+-- Players whose builds you chose to hide (right-click a build), by lower-case name.
+function AB:HiddenAuthors()
+  AshenBuildsDB.communityHidden = AshenBuildsDB.communityHidden or {}
+  return AshenBuildsDB.communityHidden
+end
+
+function AB:HideAuthor(name, hide)
+  local key = string.lower(name or "")
+  if key == "" then return end
+  self:HiddenAuthors()[key] = hide and name or nil
+  self:RefreshCommunityList()
+end
+
 function AB:GetFilteredCommunityBuilds()
   local all, out, query, i, e = self:GetCommunityBuilds(), {}, "", nil, nil
+  local hidden = self:HiddenAuthors()
   if self.communitySearch then query = string.lower(self.communitySearch:GetText() or "") end
   for i = 1, table.getn(all) do
     e = all[i]
-    if query == "" or string.find(string.lower(e.name), query, 1, true) or string.find(string.lower(e.author), query, 1, true) then
-      table.insert(out, e)
+    -- Builds with a flagged name, and builds from players you hid, are not listed.
+    if not hidden[string.lower(e.author)] and not self:IsProfane(e.name) then
+      if query == "" or string.find(string.lower(e.name), query, 1, true) or string.find(string.lower(e.author), query, 1, true) then
+        table.insert(out, e)
+      end
     end
   end
   table.sort(out, Compare)
@@ -92,7 +109,7 @@ end
 local function ShowRowTooltip(row)
   local e = row.entry; if not e then return end
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-  GameTooltip:SetText(AB:MaskProfanity(e.name), 1, 0.82, 0.28)
+  GameTooltip:SetText(e.name, 1, 0.82, 0.28)
   GameTooltip:AddLine("by " .. e.author, 0.85, 0.85, 0.85)
   local r, g, b = ClassColor(e.class)
   GameTooltip:AddLine("Level " .. e.level .. " " .. e.race .. " " .. e.class .. " - " .. e.spec, r, g, b)
@@ -106,6 +123,7 @@ local function ShowRowTooltip(row)
   GameTooltip:AddLine(e.votes .. " upvote" .. (e.votes == 1 and "" or "s") .. "  -  published " .. date("%Y-%m-%d", e.ver), 0.85, 0.85, 0.85)
   if not e.confirmed then GameTooltip:AddLine("Passed along by another player; not yet seen from the author.", 1, 0.6, 0.3, 1) end
   GameTooltip:AddLine("Left-click to load into the planner.", 0.4, 1, 0.4)
+  GameTooltip:AddLine("Right-click to hide every build from " .. e.author .. ".", 0.7, 0.7, 0.7)
   GameTooltip:Show()
 end
 
@@ -179,7 +197,17 @@ function AB:CreateCommunityUI()
     r.vote:SetScript("OnClick", function() local e = this:GetParent().entry; if e then AB:ToggleVote(e.id) end end)
     r.vote:SetScript("OnEnter", function() ShowVoteTooltip(this) end); r.vote:SetScript("OnLeave", function() GameTooltip:Hide() end)
     r.votes = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.votes:SetPoint("LEFT", r, "LEFT", COLUMNS[6].x + 24, 0); r.votes:SetWidth(COLUMNS[6].w - 24); r.votes:SetJustifyH("LEFT")
-    r:SetScript("OnClick", function() local e = this.entry; if e then AB:ConfirmDiscard(AB:MaskProfanity(e.name), function() AB:LoadCommunityBuild(e.id) end) end end)
+    r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    r:SetScript("OnClick", function()
+      local e = this.entry; if not e then return end
+      if arg1 == "RightButton" then
+        local author = e.author
+        AB:ShowPrompt({title = "HIDE PLAYER", text = "Hide every community build from " .. author .. "?\n(/ab unhide " .. author .. " shows them again.)",
+          accept = "Hide", onAccept = function() AB:HideAuthor(author, true) end})
+        return
+      end
+      AB:ConfirmDiscard(e.name, function() AB:LoadCommunityBuild(e.id) end)
+    end)
     r:SetScript("OnEnter", function() ShowRowTooltip(this) end); r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     self.communityRows[i] = r
   end
@@ -213,7 +241,7 @@ function AB:RefreshCommunityList()
   for i = 1, ROWS do
     row = self.communityRows[i]; e = list[(self.communityPage - 1) * ROWS + i]; row.entry = e
     if e then
-      row.name:SetText(AB:MaskProfanity(e.name))
+      row.name:SetText(e.name)
       row.author:SetText("by " .. e.author .. (e.mine and "  (you)" or ""))
       r, g, b = ClassColor(e.class); row.cells.class:SetText(e.class); row.cells.class:SetTextColor(r, g, b)
       row.cells.race:SetText(e.race); row.cells.level:SetText(tostring(e.level)); row.cells.spec:SetText(SpecText(e))

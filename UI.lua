@@ -368,7 +368,7 @@ function AB:UpdatePreviewNote()
   local area=self.previewArea
   local n=table.getn(self:MissingPreviewItems())
   local notes={"Drag to turn, scroll to zoom."}
-  local myRace=UnitRace("player")
+  local myRace=self.PlayerRace()
   if myRace and self.current.race and string.gsub(myRace,"%s","")~=string.gsub(self.current.race,"%s","") then table.insert(notes,"Shown on your own "..myRace.." model.") end
   if n>0 and area.loadUntil then table.insert(notes,"Loading "..n.." item"..(n==1 and "" or "s").." from the server...")
   elseif n>0 then table.insert(notes,n.." item"..(n==1 and "" or "s").." couldn't be loaded; your own gear shows there.") end

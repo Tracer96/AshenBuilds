@@ -68,7 +68,15 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - Publish a saved build and every player on the realm running Ashen Builds can see, load and upvote it.
 - Builds and votes are shared player-to-player over a hidden realm channel plus guild, party and raid.
   They persist while the author or voters are offline, and new players catch up when they log in.
-- Build names are profanity-filtered.
+- Builds with offensive names are not listed. Right-click a build to hide every build from that
+  player (`/ab unhide <player>` shows them again).
+
+**What is shared.** To sync, the addon joins a hidden chat channel called `AshenBuilds` and also
+uses guild, party and raid addon messages. When you publish a build, your character name is sent
+with it, together with the build's name, gear, enchants and talents, and your upvotes carry your
+character name too. Nothing is sent until you publish or vote, apart from short "what do you have?"
+sync requests. `/ab sync off` stops using the channel (useful if you are at the ten-channel limit)
+and syncs over guild and party only.
 
 ## Controls
 
@@ -99,8 +107,8 @@ an item (or loading a saved build) takes you back to the Planner.
 | `/ab sim` | Simulate the current build |
 | `/ab sim settings` | Open the simulator settings |
 | `/ab sim log` | One fight's combat log from the last run |
-| `/ab debug` | Show loaded item, set and source counts |
-| `/ab debugset <itemID>` | Show how an item's set is resolved |
+| `/ab sync on` / `off` | Use the hidden realm channel for community builds, or guild and party only |
+| `/ab unhide <player>` | Show community builds from a player you hid |
 
 ## For developers
 
@@ -123,6 +131,13 @@ an item (or loading a saved build) takes you back to the Planner.
 - **Base stats** in `Data/BaseStats.lua` come from the vanilla `player_levelstats` and
   `player_classlevelstats` tables.
 
+- **Troubleshooting commands:** `/ab debug` (loaded item, set and source counts),
+  `/ab debugset <itemID>` (how an item's set is resolved), `/ab model probe [slot]` and
+  `/ab model undress` (3D preview diagnostics).
+- **Tests:** `python tests/run.py` runs every suite in `tests/` against the addon inside a stub of
+  the WoW API (needs `pip install lupa`). CI also compiles every file with Lua 5.0, the client's
+  version, so 5.1-only syntax is caught.
+
 ### Code layout
 
 | File | Contents |
@@ -142,13 +157,18 @@ an item (or loading a saved build) takes you back to the Planner.
 
 ## Changelog
 
-### Unreleased
+### 1.0.0
 - Warrior DPS simulator: SIM DPS button with progress bar, breakdown tooltip, per-class settings
   (boss armor list, buffs, debuffs, rotation, tanking), combat log, set bonuses and item procs from
   Turtle's server data, Protection abilities.
 - Talents, Community, Saved Builds and Item Database are tabs inside the main window.
 - Talent window redesign with the game's tree art and prerequisite arrows.
 - Racial weapon skill bonuses corrected to +3.
+- Community: bad messages from other clients are ignored instead of raising errors; much less sync
+  traffic; players on older versions are told to update; `/ab sync off`; hide a player's builds;
+  builds with offensive names are hidden.
+- Race and class are stored in English on non-English clients.
+- No longer touches the Talented addon's globals.
 
 ### 0.9.7
 - Enchants generated from the Turtle WoW database (263, including Turtle customs, ring/neck
