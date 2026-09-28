@@ -105,3 +105,7 @@ Profanity.lua
 Community.lua
 CommunityUI.lua
 Minimap.lua
+Sim\SimCore.lua
+Sim\SimItems.lua
+Sim\SimWarrior.lua
+Sim\SimUI.lua
