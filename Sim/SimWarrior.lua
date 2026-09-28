@@ -97,10 +97,32 @@ W.BUFFS = {
   {key="elemstone", name="Elemental Sharpening Stone", crit=2, src="DB", group="stone"},
   {key="densestone", name="Dense Sharpening Stone", weaponDmg=8, src="DB", group="stone"},
 }
+-- Target armor debuffs (Turtle DB values; same group = do not stack).
 W.DEBUFFS = {
-  {key="sunder", name="Sunder Armor x5", armor=2250, src="DB"},
+  {key="sunder", name="Sunder Armor x5", armor=2250, src="DB", group="major"},
+  {key="iea", name="Improved Expose Armor (5 pts)", armor=2550, src="DB", group="major"},
   {key="faerie", name="Faerie Fire", armor=505, src="DB"},
   {key="cor", name="Curse of Recklessness", armor=640, src="DB"},
+  {key="annihilator", name="Annihilator x3 (raid)", armor=300, src="DB"},
+  {key="crystal", name="Crystal Yield", armor=200, src="DB"},
+}
+
+-- Boss armor (Turtle WoW Raid Boss Armor Values sheet). Picking one fills in the armor.
+W.BOSSES = {
+  {"MC - Most bosses", 4211}, {"MC - Sulfuron Harbinger", 4786}, {"MC - Gehennas, Lucifron, Shazzrah", 3402},
+  {"Onyxia", 4211}, {"BWL - All bosses", 4211},
+  {"ZG - Bloodlord Mandokir", 4211}, {"ZG - High Priest Thekal", 3850}, {"ZG - Most bosses", 3402},
+  {"AQ20 - Most bosses", 4211}, {"AQ20 - Moam", 4113}, {"AQ20 - Buru the Gorger", 3402},
+  {"AQ40 - Most bosses", 4211}, {"AQ40 - Emperor Vek'lor", 3833}, {"AQ40 - The Prophet Skeram", 3402},
+  {"Naxx - Most bosses", 4211}, {"Naxx - Loatheb, Patch, Thaddius", 4611}, {"Naxx - Faerlina, Noth", 3850}, {"Naxx - Gothik, Kel'Thuzad", 3402},
+  {"ES - Solnius", 4712}, {"ES - Erennius", 4912},
+  {"Kara10 - Lord Blackwald", 4325}, {"Kara10 - Howlfang, Moroes", 3892}, {"Kara10 - Grizikil, Araxxna", 3044},
+  {"Kara40 - Most bosses", 4211}, {"Kara40 - Krull", 4752}, {"Kara40 - Rook, Rupturan, Mephistroth", 4611},
+  {"Kara40 - Echo, Sanv Tasdal", 3850}, {"Kara40 - Bishop", 3402},
+  {"World - Kazzak, Azuregos, Dragons", 4211}, {"World - Ostarius", 5980}, {"World - Dark Reaver of Karazhan", 4285},
+  {"World - Omen", 4186}, {"World - Nerubian Overseer", 3761},
+  {"Silithus - Lord Skwol", 4061}, {"Silithus - Prince Thunderaan", 4213},
+  {"UBRS - Gyth", 4061}, {"UBRS - Lord Valthalak", 3400}, {"Strat UD - Atiesh", 3850},
 }
 W.ROTATIONS = {
   {key="auto", name="Automatic (from weapons)"},
@@ -115,7 +137,7 @@ W.CUSTOM_ABILITIES = {"Bloodthirst","Mortal Strike","Whirlwind","Overpower","Sla
 
 function W.DefaultSettings()
   return {
-    duration = 120, targetLevel = 63, targetArmor = 4211, position = "behind", parry = 14, targets = 1,
+    duration = 120, targetLevel = 63, targetArmor = 4211, boss = "BWL - All bosses", position = "behind", parry = 14, targets = 1,
     iterations = 1000, reaction = 250, rotation = "auto", hsRage = 30, executePct = 20, startRage = 0,
     useHeroicStrike = true, enrageOnBloodrage = true, seed = 12345,
     tanking = "auto", bossSpeed = 2.0, bossMin = 1000, bossMax = 1400,
@@ -890,7 +912,7 @@ A["Concussion Blow"] = {name = "Concussion Blow", cd = 20, refund = false, talen
 A["Sunder Armor"] = {name = "Sunder Armor", cd = 0, refund = true, level = 10,
   Cost = function(self, a) return 10 - (a.char.set.brotherhood or 0) end,
   Usable = function(self, sim, a)
-    if a.cfg.debuffs and a.cfg.debuffs.sunder then return false end
+    if a.cfg.debuffs and (a.cfg.debuffs.sunder or a.cfg.debuffs.iea) then return false end
     local au = a.auras["Sunder Armor"]
     local m = a.mods["Sunder Armor"]
     return not au.active or (m and m.stacks or 0) < 5 or (au.expiry and au.expiry.t - sim.t < 3)
@@ -1178,6 +1200,7 @@ function W.GetSettings()
   local saved = AshenBuildsDB.simSettings.Warrior
   local d = W.DefaultSettings()
   if not saved then AshenBuildsDB.simSettings.Warrior = d; return d end
+  if saved.boss == nil then saved.boss = "custom" end   -- settings from before the boss list
   local k, v
   for k, v in pairs(d) do if saved[k] == nil then saved[k] = v end end
   return saved

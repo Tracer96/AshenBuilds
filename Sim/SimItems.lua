@@ -98,8 +98,8 @@ S.ProcAuras = {
   Eskhandar = {name = "Eskhandar's Rage", duration = 5, haste = 30},
   Tempest = {name = "Tempest Haste", duration = 20, haste = 15},
   Zeal = {name = "Zeal", duration = 15, dmgBonus = 10},
-  Annihilator = {name = "Armor Shatter", duration = 45, armor = 200, maxStacks = 3},
-  Rivenspike = {name = "Puncture Armor", duration = 30, armor = 200, maxStacks = 3},
+  Annihilator = {name = "Armor Shatter", duration = 45, armor = 100, maxStacks = 3},     -- DB 16928: 100 per stack
+  Rivenspike = {name = "Puncture Armor", duration = 30, armor = 200, maxStacks = 3},      -- DB 17315
   Bonereaver = {name = "Bonereaver's Edge", duration = 10, armor = 700, maxStacks = 3},
   Destiny = {name = "Destiny", duration = 10, stats = {str = 200}},
   Untamed = {name = "Untamed Fury", duration = 8, stats = {str = 300}},

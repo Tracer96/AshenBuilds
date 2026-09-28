@@ -163,7 +163,8 @@ function AB:ShowSimTooltip(owner)
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
   GameTooltip:SetText(string.format("Simulated DPS: %.1f", r.mean), Color(g))
   GameTooltip:AddLine(string.format("95%% confidence %.1f - %.1f  (spread %.0f - %.0f)", r.ciLow, r.ciHigh, sum.min or 0, sum.max or 0), .85, .85, .85)
-  GameTooltip:AddLine(string.format("%d fights of %ds vs level %d, %d armor after debuffs", fights, r.cfg.duration, r.cfg.targetLevel, r.char.targetArmor), .7, .7, .7)
+  GameTooltip:AddLine(string.format("%d fights of %ds vs level %d: %d armor, %d after debuffs", fights, r.cfg.duration, r.cfg.targetLevel, r.cfg.targetArmor, r.char.targetArmor), .7, .7, .7)
+  if r.cfg.boss and r.cfg.boss ~= "custom" then GameTooltip:AddLine("Boss: "..r.cfg.boss, .7, .7, .7) end
   local rotName = r.rotation.key
   local i
   for i = 1, table.getn(S.Warrior.ROTATIONS) do if S.Warrior.ROTATIONS[i].key == rotName then rotName = S.Warrior.ROTATIONS[i].name end end
@@ -345,7 +346,7 @@ function AB:OpenSimSettings()
 end
 
 function AB:CreateSimSettings(model)
-  local f = CreateFrame("Frame", "AshenBuildsSimSettings", UIParent); f:SetWidth(500); f:SetHeight(720)
+  local f = CreateFrame("Frame", "AshenBuildsSimSettings", UIParent); f:SetWidth(500); f:SetHeight(780)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   self:WindowBackdrop(f); self:SetupWindow(f); f:Hide(); self.simSettingsFrame = f
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.5); self:AddEmberHeader(f, 34)
@@ -361,25 +362,54 @@ function AB:CreateSimSettings(model)
   end
 
   Header("ENCOUNTER", 22, -48)
-  Num("Fight length (sec)", 22, -68, "duration", 10, 900)
-  Num("Target level", 22, -92, "targetLevel", 1, 63)
-  Num("Target armor", 22, -116, "targetArmor", 0, 20000)
-  Num("Number of targets", 22, -140, "targets", 1, 10)
-  Num("Reaction time (ms)", 22, -164, "reaction", 0, 2000)
-  Num("Execute phase (%)", 22, -188, "executePct", 0, 100)
-  Num("Starting rage", 22, -212, "startRage", 0, 100)
-  Num("Parry if in front (%)", 22, -236, "parry", 0, 50)
+  -- Boss picker: fills in the boss's armor (typing an armor value switches back to Custom).
+  local bl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); bl:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -68); bl:SetText("Boss")
+  local boss = self:CreateDropdown(f, 176, {
+    listWidth = 240,
+    items = function()
+      local out, k = {{value = "custom", text = "Custom armor"}}
+      for k = 1, table.getn(model.BOSSES) do
+        local b = model.BOSSES[k]
+        table.insert(out, {value = b[1], text = b[1].."  |cff8d96a8"..b[2].."|r"})
+      end
+      return out
+    end,
+    getText = function() local b = C().boss; if not b or b == "custom" then return "Custom armor" end; return b end,
+    isChecked = function(v) return (C().boss or "custom") == v end,
+    onSelect = function(v)
+      local st = C(); st.boss = v
+      local k
+      for k = 1, table.getn(model.BOSSES) do if model.BOSSES[k][1] == v then st.targetArmor = model.BOSSES[k][2]; st.targetLevel = 63 end end
+      f.Refresh(); Changed()
+    end})
+  boss:SetPoint("TOPLEFT", f, "TOPLEFT", 52, -62)
+  boss.Refresh = function() boss.text:SetText(boss.opts.getText()) end
+  table.insert(controls, boss)
+  Num("Fight length (sec)", 22, -96, "duration", 10, 900)
+  Num("Target level", 22, -120, "targetLevel", 1, 63)
+  Num("Target armor", 22, -144, "targetArmor", 0, 20000)
+  do
+    local armorBox = controls[table.getn(controls)]
+    local commit = armorBox:GetScript("OnEnterPressed")
+    local function Custom() local st = C(); local v = tonumber(armorBox:GetText()); if v and v ~= st.targetArmor then st.boss = "custom" end end
+    armorBox:SetScript("OnEnterPressed", function() Custom(); commit(); f.Refresh() end)
+  end
+  Num("Number of targets", 22, -168, "targets", 1, 10)
+  Num("Reaction time (ms)", 22, -192, "reaction", 0, 2000)
+  Num("Execute phase (%)", 22, -216, "executePct", 0, 100)
+  Num("Starting rage", 22, -240, "startRage", 0, 100)
+  Num("Parry if in front (%)", 22, -264, "parry", 0, 50)
   local itNames = {}
   local i
   for i = 1, table.getn(ITERATIONS) do itNames[i] = tostring(ITERATIONS[i]) end
-  table.insert(controls, CycleRow(f, "Position", 22, -262, {"behind", "front"}, {"Behind", "Front"}, function() return C().position end, function(v) C().position = v; Changed() end))
-  table.insert(controls, CycleRow(f, "Iterations", 22, -288, ITERATIONS, itNames, function() return C().iterations end, function(v) C().iterations = v end))
-  table.insert(controls, CycleRow(f, "Tanking", 22, -314, {"auto", "on", "off"}, {"Auto (shield)", "Boss hits you", "Off"}, function() return C().tanking end, function(v) C().tanking = v; Changed() end))
-  Num("Boss swing speed (sec)", 22, -340, "bossSpeed", 0.5, 5)
-  Num("Boss hit min (unmitigated)", 22, -364, "bossMin", 0, 20000)
-  Num("Boss hit max (unmitigated)", 22, -388, "bossMax", 0, 20000)
+  table.insert(controls, CycleRow(f, "Position", 22, -290, {"behind", "front"}, {"Behind", "Front"}, function() return C().position end, function(v) C().position = v; Changed() end))
+  table.insert(controls, CycleRow(f, "Iterations", 22, -316, ITERATIONS, itNames, function() return C().iterations end, function(v) C().iterations = v end))
+  table.insert(controls, CycleRow(f, "Tanking", 22, -342, {"auto", "on", "off"}, {"Auto (shield)", "Boss hits you", "Off"}, function() return C().tanking end, function(v) C().tanking = v; Changed() end))
+  Num("Boss swing speed (sec)", 22, -368, "bossSpeed", 0.5, 5)
+  Num("Boss hit min (unmitigated)", 22, -392, "bossMin", 0, 20000)
+  Num("Boss hit max (unmitigated)", 22, -416, "bossMax", 0, 20000)
 
-  local ROT_Y = -114
+  local ROT_Y = -142
   Header("ROTATION", 22, -322 + ROT_Y)
   local rv, rn = {}, {}
   for i = 1, table.getn(model.ROTATIONS) do rv[i] = model.ROTATIONS[i].key; rn[i] = model.ROTATIONS[i].name end
@@ -434,7 +464,12 @@ function AB:CreateSimSettings(model)
   Header("TARGET DEBUFFS", 262, dy)
   for i = 1, table.getn(model.DEBUFFS) do
     local d = model.DEBUFFS[i]
-    Check(d.name, 258, dy - 14 - (i - 1) * 21, function() return C().debuffs[d.key] end, function(on) C().debuffs[d.key] = on or nil end)
+    Check(d.name, 258, dy - 14 - (i - 1) * 21, function() return C().debuffs[d.key] end, function(on)
+      local st = C()
+      if on and d.group then local j; for j = 1, table.getn(model.DEBUFFS) do if model.DEBUFFS[j].group == d.group then st.debuffs[model.DEBUFFS[j].key] = nil end end end
+      st.debuffs[d.key] = on or nil
+      f.Refresh()
+    end)
   end
 
   local reset = CreateFrame("Button", nil, f, "UIPanelButtonTemplate"); reset:SetWidth(120); reset:SetHeight(22)
