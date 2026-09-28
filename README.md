@@ -1,6 +1,6 @@
 # Ashen Builds
 
-An all-class gear and talent planner for **Turtle WoW** (1.12 client), by The Ashen Banner.
+An all-class gear and talent planner for **Turtle WoW** (1.12 client), by The Ashen Banner & Claude AI
 
 Plan a character with any class, race and level. Equip items from an embedded database of every
 equippable Turtle WoW item, add enchants, spend talents, and see character-sheet totals calculated
