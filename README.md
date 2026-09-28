@@ -29,6 +29,9 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - **Saved builds** save automatically once saved the first time. Rename, delete, or use Save As to make
   a copy. Export and import builds as short codes, including talents.
 
+<img width="990" height="912" alt="image" src="https://github.com/user-attachments/assets/b4555ee9-e21c-49be-8368-4eada29d543b" />
+
+
 ### Item database
 - Every equippable item, searchable by name, NPC or zone.
 - Dropdown filters for slot, source (dungeon, raid, quest, world boss, crafted, reputation, PvP, world
@@ -37,6 +40,9 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - Filtering is near-instant: items are indexed in the background right after login.
 - Right-click an item for its full sources: drops with chances, vendors, quests and crafting recipes.
 
+<img width="1089" height="863" alt="image" src="https://github.com/user-attachments/assets/a561d749-fc8a-41a9-b3a1-3406a1da6dd8" />
+
+
 ### Enchants
 - 263 enchants generated from the Turtle WoW database, including Turtle's custom enchants
   (Invocations, Sigils, spell penetration and vampirism bracers, and more).
@@ -44,9 +50,13 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - Two-hand, shield and item-level restrictions are enforced.
 - Search, filter by stat (sorted by value), and lower ranks hidden unless you ask for them.
 
+<img width="1208" height="881" alt="image" src="https://github.com/user-attachments/assets/8f8c6a89-65ca-47ea-a9e9-11292c322243" />
+
 ### Talents
 - All 27 Turtle WoW talent trees with full descriptions, rank limits, row requirements and prerequisites.
 - Talents that change the character sheet are applied to your totals.
+
+<img width="1318" height="859" alt="image" src="https://github.com/user-attachments/assets/885861ac-17c0-4844-bb14-944953094f61" />
 
 ### DPS simulator (Warrior)
 - Click **SIM DPS** under the trinket slots. A progress bar fills while the fights run (spread over
@@ -64,11 +74,15 @@ Type `/ab` in game, or click the ember icon on the minimap.
 - Mechanics come from Turtle's server data where possible and otherwise from the maintained Turtle
   WarriorSim. The combat log window lists the source and status of each one.
 
+<img width="725" height="793" alt="image" src="https://github.com/user-attachments/assets/109cec74-3382-4245-98a1-eb3c46b7f7d0" />
+
 ### Community builds
 - Publish a saved build and every player on the realm running Ashen Builds can see, load and upvote it.
 - Builds and votes are shared player-to-player over a hidden realm channel plus guild, party and raid.
   They persist while the author or voters are offline, and new players catch up when they log in.
 - Build names are profanity-filtered.
+
+<img width="945" height="702" alt="image" src="https://github.com/user-attachments/assets/0703cb20-68dd-491e-b926-4f5fba998cf3" />
 
 ## Controls
 
