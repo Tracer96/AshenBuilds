@@ -345,7 +345,7 @@ function AB:OpenSimSettings()
 end
 
 function AB:CreateSimSettings(model)
-  local f = CreateFrame("Frame", "AshenBuildsSimSettings", UIParent); f:SetWidth(500); f:SetHeight(600)
+  local f = CreateFrame("Frame", "AshenBuildsSimSettings", UIParent); f:SetWidth(500); f:SetHeight(720)
   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   self:WindowBackdrop(f); self:SetupWindow(f); f:Hide(); self.simSettingsFrame = f
   self:ApplyEmberBackground(f, 10, 0.5, 0.5, 0.5); self:AddEmberHeader(f, 34)
@@ -374,13 +374,18 @@ function AB:CreateSimSettings(model)
   for i = 1, table.getn(ITERATIONS) do itNames[i] = tostring(ITERATIONS[i]) end
   table.insert(controls, CycleRow(f, "Position", 22, -262, {"behind", "front"}, {"Behind", "Front"}, function() return C().position end, function(v) C().position = v; Changed() end))
   table.insert(controls, CycleRow(f, "Iterations", 22, -288, ITERATIONS, itNames, function() return C().iterations end, function(v) C().iterations = v end))
+  table.insert(controls, CycleRow(f, "Tanking", 22, -314, {"auto", "on", "off"}, {"Auto (shield)", "Boss hits you", "Off"}, function() return C().tanking end, function(v) C().tanking = v; Changed() end))
+  Num("Boss swing speed (sec)", 22, -340, "bossSpeed", 0.5, 5)
+  Num("Boss hit min (unmitigated)", 22, -364, "bossMin", 0, 20000)
+  Num("Boss hit max (unmitigated)", 22, -388, "bossMax", 0, 20000)
 
-  Header("ROTATION", 22, -322)
+  local ROT_Y = -114
+  Header("ROTATION", 22, -322 + ROT_Y)
   local rv, rn = {}, {}
   for i = 1, table.getn(model.ROTATIONS) do rv[i] = model.ROTATIONS[i].key; rn[i] = model.ROTATIONS[i].name end
-  local rot = CycleRow(f, "Preset", 22, -342, rv, rn, function() return C().rotation end, function(v) C().rotation = v; Changed() end)
+  local rot = CycleRow(f, "Preset", 22, -342 + ROT_Y, rv, rn, function() return C().rotation end, function(v) C().rotation = v; Changed() end)
   rot:SetWidth(150); table.insert(controls, rot)
-  Num("Heroic Strike at rage", 22, -368, "hsRage", 0, 130)
+  Num("Heroic Strike at rage", 22, -368 + ROT_Y, "hsRage", 0, 130)
   local function Check(label, x, y, get, set)
     local c = self:CreateCheck(f, label, function(on) set(on); Changed() end)
     c:SetPoint("TOPLEFT", f, "TOPLEFT", x, y)
@@ -388,13 +393,13 @@ function AB:CreateSimSettings(model)
     table.insert(controls, c)
     return c
   end
-  Check("Use Heroic Strike / Cleave", 20, -390, function() return C().useHeroicStrike end, function(on) C().useHeroicStrike = on end)
-  Check("Enrage from Bloodrage (reference)", 20, -410, function() return C().enrageOnBloodrage end, function(on) C().enrageOnBloodrage = on end)
-  local ch = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ch:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -438); ch:SetText("Abilities (ticking one switches to Custom):")
+  Check("Use Heroic Strike / Cleave", 20, -390 + ROT_Y, function() return C().useHeroicStrike end, function(on) C().useHeroicStrike = on end)
+  Check("Enrage from Bloodrage (reference)", 20, -410 + ROT_Y, function() return C().enrageOnBloodrage end, function(on) C().enrageOnBloodrage = on end)
+  local ch = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ch:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -438 + ROT_Y); ch:SetText("Abilities (ticking one switches to Custom):")
   for i = 1, table.getn(model.CUSTOM_ABILITIES) do
     local name = model.CUSTOM_ABILITIES[i]
     local col, row = math.mod(i - 1, 2), math.floor((i - 1) / 2)
-    Check(name, 20 + col * 112, -452 - row * 20, function() return C().custom[name] end, function(on)
+    Check(name, 20 + col * 112, -452 + ROT_Y - row * 20, function() return C().custom[name] end, function(on)
       local s = C()
       -- Choosing abilities only means something for the Custom preset, so switch to it.
       if s.rotation ~= "custom" then

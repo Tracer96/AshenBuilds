@@ -89,16 +89,29 @@ end
 local Sim = {}
 Sim.__index = Sim
 
+-- Events are recycled once they have run. A fight schedules thousands of them,
+-- and fresh tables for each would make the client pause for garbage collection
+-- every few seconds while a simulation runs. Anyone holding an event must drop
+-- the reference when it fires or is cancelled (every caller in the modules does).
+local pool, poolN, POOL_MAX = {}, 0, 8192
+local function Recycle(ev)
+  ev.fn = nil; ev.a = nil
+  if poolN < POOL_MAX then poolN = poolN + 1; pool[poolN] = ev end
+end
+
 -- Schedules fn(sim, arg) at absolute time t (seconds). Returns the event; set ev.dead to cancel.
 function Sim:At(t, fn, arg)
   self.seq = self.seq + 1
-  local ev = {t = t, seq = self.seq, fn = fn, a = arg}
+  local ev
+  if poolN > 0 then ev = pool[poolN]; pool[poolN] = nil; poolN = poolN - 1; ev.dead = nil else ev = {} end
+  ev.t = t; ev.seq = self.seq; ev.fn = fn; ev.a = arg
   Push(self.queue, ev)
   return ev
 end
 function Sim:After(dt, fn, arg) return self:At(self.t + dt, fn, arg) end
 
 -- Debug trace (only when a log table was supplied).
+-- Callers check sim.log first so no text is built when nobody is reading it.
 function Sim:Log(text) if self.log then table.insert(self.log, string.format("%8.3f  %s", self.t, text)) end end
 
 -- Damage bookkeeping per source ("Bloodthirst", "Auto Attack (MH)", "Deep Wounds", ...).
@@ -124,6 +137,8 @@ function S.NewAura(sim, name, onGain, onFade)
   return a
 end
 
+local function AuraExpire(sim, a) a.expiry = nil; a:Remove() end
+
 -- Applies/refreshes for `duration` seconds (nil = until removed).
 function Aura:Apply(duration, stacks)
   local sim = self.sim
@@ -134,7 +149,7 @@ function Aura:Apply(duration, stacks)
   if stacks then self.stacks = stacks end
   if self.expiry then self.expiry.dead = true; self.expiry = nil end
   if duration then
-    self.expiry = sim:After(duration, function(s, a) a.expiry = nil; a:Remove() end, self)
+    self.expiry = sim:After(duration, AuraExpire, self)
   end
 end
 
@@ -162,9 +177,14 @@ function S.RunFight(model, char, cfg, seed, log)
   model.Start(sim, actor)
   while true do
     local ev = Pop(sim.queue)
-    if not ev or ev.t > sim.duration then break end
+    if not ev then break end
+    if ev.t > sim.duration then Recycle(ev); break end
     if not ev.dead then sim.t = ev.t; ev.fn(sim, ev.a) end
+    Recycle(ev)
   end
+  local q, i = sim.queue
+  for i = 1, q.n do Recycle(q.items[i]); q.items[i] = nil end
+  q.n = 0
   sim.t = sim.duration
   for _, a in pairs(sim.auras) do a:Close(sim.duration) end
   model.Finish(sim, actor)
@@ -211,7 +231,7 @@ end
 ---------------------------------------------------------------------------
 local runner = CreateFrame and CreateFrame("Frame") or nil
 local job = nil
-local FRAME_BUDGET = 0.012
+local FRAME_BUDGET = 0.008
 
 local function Clock()
   if debugprofilestop then return debugprofilestop() / 1000 end

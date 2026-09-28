@@ -50,9 +50,25 @@ M("racials", V, "DB", "+3 weapon skill racials (builder), Night Elf Quickness +1
 M("procs", R, "reference/DB", "Chance-on-hit weapons, trinkets and enchants from the item proc table. Rates marked DB come from Turtle item data.")
 M("stances", R, "reference", "Switching stance keeps rage up to Tactical Mastery; 1 sec stance cooldown. Defensive Stance -10% damage.")
 M("sweepingStrikes", L, "assumed", "Next 5 abilities/main-hand swings hit a second target for the same damage.")
+M("shieldSlam", R, "DB base/cost/cooldown, reference coefficients", "343-359 at 60 (DB), 20 rage, 6 sec cooldown (-0.75/1.5 Improved Shield Slam). Plus 2x block value + 20% attack power (reference; Turtle's coefficients are not in the DB).")
+M("revenge", V, "DB", "82-100 at 60, 5 rage, 6 sec cooldown (-0.5/1/1.5 Improved Revenge), usable for 5 sec after you block, dodge or parry. Reprisal +25/50% damage and 50/100% chance to refund.")
+M("concussionBlow", V, "DB", "235 at 60, ignores armor, 20 sec cooldown, no cost, generates 10 rage.")
+M("sunderArmor", V, "DB", "450 armor per stack, 5 stacks, 30 sec, 10 rage. Only used when the Sunder debuff is not already assumed in the settings.")
+M("tanking", L, "classic formulas + settings", "Boss swings at the speed and damage in the settings. Avoidance vs a level 63 boss = your sheet dodge/parry/block - 0.6%; 15% crushing blows; rage from damage taken = damage / conversion x 2.5 (reference). Shield Specialization +1..5 rage per block (DB).")
 M("reaction", R, "reference", "Each decision waits a random reaction time (setting +/- 50 ms).")
 
 local floor, max, min = math.floor, math.max, math.min
+
+-- Counter names like "rage.gen.white" are built once and reused, so a running
+-- simulation does not create new strings on every event.
+local KEYS = {}
+local function Key(prefix, name)
+  local t = KEYS[prefix]
+  if not t then t = {}; KEYS[prefix] = t end
+  local k = t[name]
+  if not k then k = prefix..name; t[name] = k end
+  return k
+end
 local MISS, DODGE, PARRY, GLANCE, CRIT, HIT = "miss", "dodge", "parry", "glance", "crit", "hit"
 
 -- Level 1-60 crit per point of agility for warriors (reference table).
@@ -91,16 +107,18 @@ W.ROTATIONS = {
   {key="fury_dw", name="Dual-Wield Fury"},
   {key="fury_2h", name="Two-Hand Fury"},
   {key="arms", name="Arms"},
-  {key="furyprot", name="Fury/Prot (shield)"},
+  {key="prot", name="Protection (shield)"},
   {key="custom", name="Custom"},
 }
-W.CUSTOM_ABILITIES = {"Bloodthirst","Mortal Strike","Whirlwind","Overpower","Slam","Hamstring","Master Strike","Rend","Death Wish","Recklessness","Berserker Rage","Bloodrage"}
+W.CUSTOM_ABILITIES = {"Bloodthirst","Mortal Strike","Whirlwind","Overpower","Slam","Hamstring","Master Strike","Rend",
+  "Shield Slam","Revenge","Concussion Blow","Sunder Armor","Death Wish","Recklessness","Berserker Rage","Bloodrage"}
 
 function W.DefaultSettings()
   return {
     duration = 120, targetLevel = 63, targetArmor = 4211, position = "behind", parry = 14, targets = 1,
     iterations = 1000, reaction = 250, rotation = "auto", hsRage = 30, executePct = 20, startRage = 0,
     useHeroicStrike = true, enrageOnBloodrage = true, seed = 12345,
+    tanking = "auto", bossSpeed = 2.0, bossMin = 1000, bossMax = 1400,
     buffs = {bom=true, kings=true, motw=true, mongoose=true, jujupower=true, jujumight=true, food=true},
     debuffs = {sunder=true, faerie=true, cor=true},
     custom = {["Bloodthirst"]=true, ["Whirlwind"]=true, ["Bloodrage"]=true, ["Death Wish"]=true, ["Recklessness"]=true},
@@ -283,6 +301,11 @@ function W.BuildCharacter(build, cfg)
   c.mh.bonus = c.mh.bonus + b.weaponDmg
   if c.oh then c.oh.bonus = c.oh.bonus + b.weaponDmg end
   c.targetArmor = max(0, (cfg.targetArmor or 0) - b.armor - (out.armorPen or 0))
+  -- Defensive side, for when the boss is hitting you.
+  c.dodge, c.parry, c.block, c.defense = out.dodge or 0, out.parry or 0, out.block or 0, out.defense or level * 5
+  c.playerArmor = out.armor or 0
+  c.blockGear = ((out.gear and out.gear.blockValue) or 0) - 1
+  c.blockPct = 1 + ((out.talentModifiers and out.talentModifiers.blockValuePct) or 0) / 100
   c.out = out
   if c.set.hastePct then c.notes.hasteFromSet = c.set.hastePct end
   return c
@@ -298,12 +321,12 @@ local function AddRage(sim, a, amount, source)
   local room = a.rageCap - a.rage
   if amount > room then sim:Count("rage.wasted", amount - room); amount = room end
   a.rage = a.rage + amount
-  sim:Count("rage.gen", amount); sim:Count("rage.gen."..source, amount)
+  sim:Count("rage.gen", amount); sim:Count(Key("rage.gen.", source), amount)
 end
 
 local function SpendRage(sim, a, amount, source)
   a.rage = a.rage - amount
-  sim:Count("rage.spent", amount); sim:Count("rage.spent."..source, amount)
+  sim:Count("rage.spent", amount); sim:Count(Key("rage.spent.", source), amount)
 end
 
 ---------------------------------------------------------------------------
@@ -338,6 +361,7 @@ local function Recalc(a)
   local red = armor / (armor + 400 + 85 * c.level)
   if red > 0.75 then red = 0.75 end
   a.armor = armor; a.armorMult = 1 - red
+  if c.shield then a.blockValue = max(0, floor((c.blockGear + a.str / 20) * c.blockPct)) else a.blockValue = 0 end
 end
 
 local function SetMod(a, key, def, on)
@@ -467,7 +491,7 @@ end
 local function RunProc(sim, a, p, name, speed, fromAbility)
   if sim.rng:Next() * 100 >= ProcChance(p, speed) then return 0 end
   if p.gcd and sim.t < a.gcdEnd then return 0 end
-  sim:Count("proc."..name)
+  sim:Count(Key("proc.", name))
   if p.extra then return p.extra end
   if p.spell then ApplyProcAura(sim, a, p.spell) end
   if p.dmg then if p.magic then MagicProc(sim, a, p, name) else PhysicalProc(sim, a, p, name) end end
@@ -484,8 +508,8 @@ local function OnHitProcs(sim, a, w, fromAbility, adjacent)
   if w.enchantProc then
     local p = w.enchantProc
     if sim.rng:Next() * 100 < ProcChance(p, w.speed) then
-      sim:Count("proc."..(w.enchantName or "Enchant"))
-      if p.spell then ApplyProcAura(sim, a, p.spell, p.spell..(w.offhand and " (OH)" or " (MH)")) end
+      sim:Count(Key("proc.", w.enchantName or "Enchant"))
+      if p.spell then ApplyProcAura(sim, a, p.spell, Key(p.spell, w.offhand and " (OH)" or " (MH)")) end
       if p.dmg then MagicProc(sim, a, p, (w.enchantName or "Enchant")) end
     end
   end
@@ -575,7 +599,7 @@ MainHandSwing = function(sim, a)
   local w = a.mh
   local spell = a.queued
   a.queued = nil
-  if spell and a.rage < spell.cost then sim:Log(spell.name.." cancelled (not enough rage)"); spell = nil end
+  if spell and a.rage < spell.cost then if sim.log then sim:Log(spell.name.." cancelled (not enough rage)") end; spell = nil end
   local result, dmg
   if spell then
     SpendRage(sim, a, spell.cost, spell.name)
@@ -594,7 +618,7 @@ MainHandSwing = function(sim, a)
   local done = Landed(result) and dmg * a.armorMult or 0
   local source = spell and spell.name or "Main Hand"
   sim:Damage(source, done, result)
-  sim:Log(string.format("%s %s for %d  (rage %d)", source, result, done, a.rage))
+  if sim.log then sim:Log(string.format("%s %s for %d  (rage %d)", source, result, done, a.rage)) end
   if spell then
     UnbridledWrath(sim, a, w, result)
     if not Landed(result) then AddRage(sim, a, spell.cost * 0.8, "refund") end
@@ -629,7 +653,7 @@ OffHandSwing = function(sim, a)
   a.ohEvent = sim:After(w.speed / a.haste, OffHandSwing, a)
   local done = Landed(result) and dmg * a.armorMult or 0
   sim:Damage("Off Hand", done, result)
-  sim:Log(string.format("Off Hand %s for %d  (rage %d)", result, done, a.rage))
+  if sim.log then sim:Log(string.format("Off Hand %s for %d  (rage %d)", result, done, a.rage)) end
   WhiteRage(sim, a, w, result, done)
   UnbridledWrath(sim, a, w, result)
   DoExtraAttack(sim, a)
@@ -639,6 +663,22 @@ end
 ---------------------------------------------------------------------------
 -- Abilities.
 ---------------------------------------------------------------------------
+-- Rank and talent tables (kept outside the functions so fights create no garbage).
+local T1 = {1, 1.5, 2}
+local T2 = {2, 5}
+local T3 = {0.25, 0.5}
+local T4 = {5, 10}
+local T5 = {{40, 1.15}, {48, 1.20}, {54, 1.25}, {60, 1.30}}
+local T6 = {{12, 5}, {28, 15}, {44, 25}, {60, 35}}
+local T7 = {{24, 75}, {32, 150}, {40, 225}, {48, 300}, {56, 600}}
+local T8 = {{24, 4}, {32, 8}, {40, 12}, {48, 16}, {56, 15}}
+local T9 = {{30, {175, 185}}, {38, {226, 236}}, {46, {265, 277}}, {54, {304, 318}}, {60, {343, 359}}}
+local T10 = {{14, {13, 15}}, {24, {19, 23}}, {34, {26, 32}}, {44, {44, 54}}, {54, {65, 79}}, {60, {82, 100}}}
+local T11 = {{40, 115}, {48, 150}, {54, 190}, {60, 235}}
+local T12 = {{20, 5}, {30, 10}, {40, 18}, {50, 32}, {60, 50}}
+local T13 = {{1, 11}, {8, 21}, {16, 32}, {24, 44}, {32, 58}, {40, 80}, {48, 111}, {56, 138}, {60, 157}}
+local T14 = {{1, 15}, {12, 35}, {22, 55}, {32, 85}, {42, 130}, {52, 185}, {60, 232}}
+
 local function Rank60(level, list) -- list of {minLevel, value}
   local v = list[1][2]; local i
   for i = 1, table.getn(list) do if level >= list[i][1] then v = list[i][2] end end
@@ -654,7 +694,7 @@ local function SwitchStance(sim, a, stance)
   local keep = 5 * (a.char.talents["Tactical Mastery"] or 0)
   if a.rage > keep then sim:Count("rage.stanceLost", a.rage - keep); a.rage = keep end
   Recalc(a)
-  sim:Log("Switched to "..stance.." stance")
+  if sim.log then sim:Log("Switched to "..stance.." stance") end
 end
 
 -- Can the ability be used in (or switched into) its stance with enough rage left?
@@ -667,7 +707,7 @@ end
 local function PhysicalAbility(sim, a, name, dmg, result)
   local done = Landed(result) and dmg * a.armorMult or 0
   sim:Damage(name, done, result)
-  sim:Log(string.format("%s %s for %d  (rage %d)", name, result, done, a.rage))
+  if sim.log then sim:Log(string.format("%s %s for %d  (rage %d)", name, result, done, a.rage)) end
   return done
 end
 
@@ -684,6 +724,9 @@ local function StrikeDamage(sim, a, ab, w, dmg, canDodge, sameRoll, extraCrit)
   return result
 end
 
+local function BloodrageTick(sim, a) AddRage(sim, a, 1, "bloodrage"); Think(sim, a) end
+local function RendTick(sim, a) sim:Damage("Rend", a.rendTick * a.dmgmod, "tick") end
+
 local A = {}
 W.Abilities = A
 
@@ -697,13 +740,13 @@ A["Bloodthirst"] = {name = "Bloodthirst", cd = 6, refund = true, talent = "Blood
 A["Mortal Strike"] = {name = "Mortal Strike", cd = 6, refund = true, talent = "Mortal Strike",
   Cost = function(self, a) return 30 end,
   Cast = function(self, sim, a)
-    local pct = Rank60(a.char.level, {{40, 1.15}, {48, 1.20}, {54, 1.25}, {60, 1.30}})
+    local pct = Rank60(a.char.level, T5)
     StrikeDamage(sim, a, self, a.mh, WeaponDamage(sim, a, a.mh, true) * pct * a.dmgmod * a.mh.mod, true, true, 0)
   end}
 
 A["Whirlwind"] = {name = "Whirlwind", cd = 10, refund = false, stances = {berserker = true}, level = 36,
   Cost = function(self, a) return 25 - (a.char.set.brotherhood or 0) end,
-  Cooldown = function(self, a) local r = a.char.talents["Ravager"] or 0; return 10 - (({1, 1.5, 2})[r] or 0) end,
+  Cooldown = function(self, a) local r = a.char.talents["Ravager"] or 0; return 10 - (T1[r] or 0) end,
   Cast = function(self, sim, a)
     local n, i = min(a.targets, 4)
     for i = 1, n do
@@ -721,18 +764,18 @@ A["Overpower"] = {name = "Overpower", cd = 5, refund = true, stances = {battle =
   Usable = function(self, sim, a) return sim.t < a.dodgeUntil end,
   Cast = function(self, sim, a)
     a.dodgeUntil = 0
-    local bonus = Rank60(a.char.level, {{12, 5}, {28, 15}, {44, 25}, {60, 35}})
+    local bonus = Rank60(a.char.level, T6)
     local dmg = (WeaponDamage(sim, a, a.mh, true) + bonus) * a.dmgmod * a.mh.mod
     StrikeDamage(sim, a, self, a.mh, dmg, false, true, 25 * (a.char.talents["Improved Overpower"] or 0))
   end}
 
 A["Execute"] = {name = "Execute", cd = 0, refund = false, stances = {battle = true, berserker = true}, level = 24,
-  Cost = function(self, a) local r = a.char.talents["Improved Execute"] or 0; return 15 - (({2, 5})[r] or 0) end,
+  Cost = function(self, a) local r = a.char.talents["Improved Execute"] or 0; return 15 - (T2[r] or 0) end,
   Usable = function(self, sim, a) return InExecute(sim, a) end,
   Cast = function(self, sim, a)
     local used = floor(a.rage)
-    local base = Rank60(a.char.level, {{24, 75}, {32, 150}, {40, 225}, {48, 300}, {56, 600}})
-    local per = Rank60(a.char.level, {{24, 4}, {32, 8}, {40, 12}, {48, 16}, {56, 15}})
+    local base = Rank60(a.char.level, T7)
+    local per = Rank60(a.char.level, T8)
     local cut = 1 + 0.25 * (a.char.talents["Precision Cut"] or 0)
     local dmg = (base + per * used * cut) * a.dmgmod * a.mh.mod
     local result = StrikeDamage(sim, a, self, a.mh, dmg, true, false, 0)
@@ -745,8 +788,8 @@ A["Slam"] = {name = "Slam", cd = 0, refund = true, level = 30,
     -- Only start the cast early in the swing (reference: 50% of the swing left).
     return not a.mhEvent or (a.mhEvent.t - sim.t) >= 0.5 * (a.mhSwingLen or 0)
   end,
-  CastTime = function(self, a) local r = a.char.talents["Improved Slam"] or 0; return 2.5 - (({0.25, 0.5})[r] or 0) end,
-  Gcd = function(self, a) local r = a.char.talents["Improved Slam"] or 0; return 1.5 - (({0.25, 0.5})[r] or 0) end,
+  CastTime = function(self, a) local r = a.char.talents["Improved Slam"] or 0; return 2.5 - (T3[r] or 0) end,
+  Gcd = function(self, a) local r = a.char.talents["Improved Slam"] or 0; return 1.5 - (T3[r] or 0) end,
   Cast = function(self, sim, a)
     StrikeDamage(sim, a, self, a.mh, WeaponDamage(sim, a, a.mh, false) * a.dmgmod * a.mh.mod, true, true, 0)
   end}
@@ -767,9 +810,9 @@ A["Rend"] = {name = "Rend", cd = 0, refund = true, stances = {battle = true, def
     sim:Damage("Rend", 0, result)
     if not Landed(result) then AddRage(sim, a, 8, "refund"); if result == DODGE then OpenOverpower(sim, a) end; return end
     a.auras["Rend"]:Apply(22)
-    local tick = 21 * (1 + 0.1 * (a.char.talents["Improved Rend"] or 0))
+    a.rendTick = 21 * (1 + 0.1 * (a.char.talents["Improved Rend"] or 0))
     local k
-    for k = 1, 7 do sim:After(3 * k, function(s, x) s:Damage("Rend", tick * a.dmgmod, "tick") end) end
+    for k = 1, 7 do sim:After(3 * k, RendTick, a) end
   end}
 
 A["Sweeping Strikes"] = {name = "Sweeping Strikes", buff = true, cd = 30, refund = false, talent = "Sweeping Strikes", stances = {battle = true, berserker = true},
@@ -794,9 +837,9 @@ A["Bloodrage"] = {name = "Bloodrage", buff = true, cd = 60, refund = false, offG
   Cost = function(self, a) return 0 end,
   Cast = function(self, sim, a)
     local r = a.char.talents["Improved Bloodrage"] or 0
-    AddRage(sim, a, 10 + (({5, 10})[r] or 0), "bloodrage")
+    AddRage(sim, a, 10 + (T4[r] or 0), "bloodrage")
     local k
-    for k = 1, 10 do sim:After(k, function(s, x) AddRage(s, a, 1, "bloodrage"); Think(s, a) end) end
+    for k = 1, 10 do sim:After(k, BloodrageTick, a) end
     a.auras["Bloodrage"]:Apply(10)
     if a.cfg.enrageOnBloodrage and (a.char.talents["Enrage"] or 0) > 0 then a.auras["Enrage"]:Apply(8) end
   end}
@@ -806,14 +849,73 @@ A["Battle Shout"] = {name = "Battle Shout", buff = true, cd = 0, refund = false,
   Usable = function(self, sim, a) return not a.auras["Battle Shout"].active end,
   Cast = function(self, sim, a) a.auras["Battle Shout"]:Apply(a.shoutDuration) end}
 
+A["Shield Slam"] = {name = "Shield Slam", cd = 6, refund = true, talent = "Shield Slam", needsShield = true,
+  Cost = function(self, a) return 20 end,
+  Cooldown = function(self, a) local r = a.char.talents["Improved Shield Slam"] or 0; return 6 - 0.75 * r end,
+  Cast = function(self, sim, a)
+    local base = Rank60(a.char.level, T9)
+    local dmg = (sim.rng:Range(base[1], base[2]) + 2 * a.blockValue + 0.2 * a.ap) * a.dmgmod * a.mh.mod
+    StrikeDamage(sim, a, self, a.mh, dmg, true, true, 0)
+    local r = a.char.talents["Improved Shield Slam"] or 0
+    if r > 0 then a.bonusBlock = 35 * r; a.bonusBlockUntil = sim.t + 4.5 end
+  end}
+
+A["Revenge"] = {name = "Revenge", cd = 6, refund = true, level = 14, stances = {defensive = true},
+  Cost = function(self, a) return 5 end,
+  Cooldown = function(self, a) local r = a.char.talents["Improved Revenge"] or 0; return 6 - 0.5 * r end,
+  Usable = function(self, sim, a) return sim.t < a.revengeUntil end,
+  Cast = function(self, sim, a)
+    a.revengeUntil = 0
+    local base = Rank60(a.char.level, T10)
+    local rp = a.char.talents["Reprisal"] or 0
+    local dmg = sim.rng:Range(base[1], base[2]) * (1 + 0.25 * rp) * a.dmgmod * a.mh.mod
+    local result = StrikeDamage(sim, a, self, a.mh, dmg, true, false, 0)
+    if Landed(result) and rp > 0 and sim.rng:Next() * 100 < 50 * rp then AddRage(sim, a, 5, "reprisal") end
+  end}
+
+A["Concussion Blow"] = {name = "Concussion Blow", cd = 20, refund = false, talent = "Concussion Blow",
+  Cost = function(self, a) return 0 end,
+  Cast = function(self, sim, a)
+    local dmg = Rank60(a.char.level, T11) * a.dmgmod * a.mh.mod
+    local result = SpellRoll(sim, a, a.mh, true, false, 0)
+    if Landed(result) then OnHitProcs(sim, a, a.mh, true) end
+    if result == DODGE then OpenOverpower(sim, a) end
+    if result == CRIT then dmg = dmg * a.abilityCritMult; OnCrit(sim, a) end
+    local done = Landed(result) and dmg or 0   -- ignores armor
+    sim:Damage("Concussion Blow", done, result)
+    if sim.log then sim:Log(string.format("Concussion Blow %s for %d  (rage %d)", result, done, a.rage)) end
+    AddRage(sim, a, 10, "concussionBlow")
+  end}
+
+A["Sunder Armor"] = {name = "Sunder Armor", cd = 0, refund = true, level = 10,
+  Cost = function(self, a) return 10 - (a.char.set.brotherhood or 0) end,
+  Usable = function(self, sim, a)
+    if a.cfg.debuffs and a.cfg.debuffs.sunder then return false end
+    local au = a.auras["Sunder Armor"]
+    local m = a.mods["Sunder Armor"]
+    return not au.active or (m and m.stacks or 0) < 5 or (au.expiry and au.expiry.t - sim.t < 3)
+  end,
+  Cast = function(self, sim, a)
+    local result = SpellRoll(sim, a, a.mh, true, true, 0)
+    sim:Damage("Sunder Armor", 0, result)
+    if result == DODGE then OpenOverpower(sim, a) end
+    if not Landed(result) then AddRage(sim, a, self:Cost(a) * 0.8, "refund"); return end
+    OnHitProcs(sim, a, a.mh, true)
+    local m = a.mods["Sunder Armor"]
+    local stacks = min(((m and m.stacks) or 0) + 1, 5)
+    a.mods["Sunder Armor"] = {armor = 450, stacks = stacks}
+    a.auras["Sunder Armor"]:Apply(30)
+    Recalc(a)
+  end}
+
 -- Heroic Strike / Cleave are queued on the next main-hand swing.
 local function HSInfo(a)
   local level = a.char.level
   if a.targets > 1 then
-    return {name = "Cleave", cost = 20 - (a.char.talents["Ravager"] or 0), bonus = Rank60(level, {{20, 5}, {30, 10}, {40, 18}, {50, 32}, {60, 50}})}
+    return {name = "Cleave", cost = 20 - (a.char.talents["Ravager"] or 0), bonus = Rank60(level, T12)}
   end
   return {name = "Heroic Strike", cost = 15 - (a.char.talents["Improved Heroic Strike"] or 0) - (a.char.set.brotherhood or 0),
-    bonus = Rank60(level, {{1, 11}, {8, 21}, {16, 32}, {24, 44}, {32, 58}, {40, 80}, {48, 111}, {56, 138}, {60, 157}})}
+    bonus = Rank60(level, T13)}
 end
 
 ---------------------------------------------------------------------------
@@ -829,15 +931,15 @@ local ROTATIONS = {
   arms = {stance = "battle",
     normal = {"Battle Shout", "Bloodrage", "Sweeping Strikes", "Death Wish", "Recklessness", "Mortal Strike", "Whirlwind", "Overpower", "Slam", "Master Strike"},
     exec = {"Bloodrage", "Death Wish", "Recklessness", "Mortal Strike", "Execute"}},
-  furyprot = {stance = "defensive", partial = "Revenge, Shield Slam, Sunder Armor and threat are not simulated.",
-    normal = {"Battle Shout", "Bloodrage", "Death Wish", "Bloodthirst", "Master Strike"},
-    exec = {"Bloodrage", "Bloodthirst"}},
+  prot = {stance = "defensive",
+    normal = {"Battle Shout", "Bloodrage", "Shield Slam", "Revenge", "Bloodthirst", "Concussion Blow", "Sunder Armor", "Death Wish", "Master Strike"},
+    exec = {"Battle Shout", "Bloodrage", "Shield Slam", "Revenge", "Bloodthirst", "Concussion Blow", "Sunder Armor", "Death Wish", "Master Strike"}},
 }
 
 function W.ResolveRotation(char, cfg)
   local key = cfg.rotation or "auto"
   if key == "auto" then
-    if char.shield then key = "furyprot"
+    if char.shield then key = "prot"
     elseif char.mh.twoHand then key = (char.talents["Mortal Strike"] and "arms") or "fury_2h"
     else key = "fury_dw" end
   end
@@ -849,7 +951,7 @@ function W.ResolveRotation(char, cfg)
       if cfg.custom and cfg.custom[name] then table.insert(normal, name) end
     end
     -- Execute phase: cooldowns, then Bloodthirst/Mortal Strike, then Execute (as the reference sim).
-    local EXEC_KEEP = {["Bloodrage"]=1, ["Death Wish"]=1, ["Recklessness"]=1, ["Berserker Rage"]=1, ["Bloodthirst"]=2, ["Mortal Strike"]=2}
+    local EXEC_KEEP = {["Bloodrage"]=1, ["Death Wish"]=1, ["Recklessness"]=1, ["Berserker Rage"]=1, ["Bloodthirst"]=2, ["Mortal Strike"]=2, ["Shield Slam"]=2}
     local tier
     for tier = 1, 2 do
       for i = 2, table.getn(normal) do if EXEC_KEEP[normal[i]] == tier then table.insert(exec, normal[i]) end end
@@ -857,8 +959,10 @@ function W.ResolveRotation(char, cfg)
     table.insert(exec, "Execute")
     local stance = "berserker"
     if cfg.custom and (cfg.custom["Overpower"] or cfg.custom["Rend"]) and not cfg.custom["Whirlwind"] then stance = "battle" end
+    if cfg.custom and cfg.custom["Revenge"] and not cfg.custom["Whirlwind"] and not cfg.custom["Overpower"] then stance = "defensive" end
     return {key = "custom", stance = stance, normal = normal, exec = exec}
   end
+  if key == "furyprot" then key = "prot" end
   local r = ROTATIONS[key] or ROTATIONS.fury_dw
   return {key = key, stance = r.stance, normal = r.normal, exec = r.exec, partial = r.partial}
 end
@@ -868,7 +972,7 @@ local function Known(char, list)
   local out, i, ab = {}
   for i = 1, table.getn(list) do
     ab = A[list[i]]
-    if ab and (not ab.talent or (char.talents[ab.talent] or 0) > 0) and (not ab.level or char.level >= ab.level) then table.insert(out, ab) end
+    if ab and (not ab.talent or (char.talents[ab.talent] or 0) > 0) and (not ab.level or char.level >= ab.level) and (not ab.needsShield or char.shield) then table.insert(out, ab) end
   end
   return out
 end
@@ -895,7 +999,7 @@ local function FinishCast(sim, a)
   local ab = a.casting
   a.casting = nil
   ab:Cast(sim, a)
-  sim:Count("cast."..ab.name)
+  sim:Count(Key("cast.", ab.name))
   DoExtraAttack(sim, a)
   if a.mhDue then a.mhDue = nil; MainHandSwing(sim, a) end
   if a.ohDue then a.ohDue = nil; OffHandSwing(sim, a) end
@@ -913,19 +1017,19 @@ local function Use(sim, a, ab)
   if not ab.offGcd then a.gcdEnd = sim.t + (ab.Gcd and ab:Gcd(a) or 1.5) end
   if ab.CastTime then
     a.casting = ab
-    sim:Log("Casting "..ab.name)
+    if sim.log then sim:Log("Casting "..ab.name) end
     sim:After(ab:CastTime(a), FinishCast, a)
     return
   end
   ab:Cast(sim, a)
-  sim:Count("cast."..ab.name)
-  if ab.buff then sim:Log(ab.name.." used  (rage "..floor(a.rage)..")") end
+  sim:Count(Key("cast.", ab.name))
+  if ab.buff then if sim.log then sim:Log(ab.name.." used  (rage "..floor(a.rage)..")") end end
   DoExtraAttack(sim, a)
 end
 
-local function Act(sim, x)
-  local a, ab = x[1], x[2]
-  a.pending = nil
+local function Act(sim, a)
+  local ab = a.pendingAb
+  a.pending = nil; a.pendingAb = nil
   if not a.casting and Usable(sim, a, ab) then Use(sim, a, ab) end
   Think(sim, a)
 end
@@ -933,15 +1037,15 @@ end
 local function QueueHS(sim, a)
   a.hsPending = nil
   if a.queued or InExecute(sim, a) then return end
-  local q = HSInfo(a)
-  if a.rage >= q.cost and a.rage >= a.cfg.hsRage then a.queued = q; sim:Log(q.name.." queued  (rage "..floor(a.rage)..")") end
+  local q = a.hsInfo
+  if a.rage >= q.cost and a.rage >= a.cfg.hsRage then a.queued = q; if sim.log then sim:Log(q.name.." queued  (rage "..floor(a.rage)..")") end end
 end
 
 local function Wake(sim, a) a.wakeEv = nil; Think(sim, a) end
 
 Think = function(sim, a)
   if a.useHS and not a.queued and not a.hsPending and not InExecute(sim, a) then
-    local q = HSInfo(a)
+    local q = a.hsInfo
     if a.rage >= q.cost and a.rage >= a.cfg.hsRage then a.hsPending = sim:After(React(sim, a), QueueHS, a) end
   end
   if a.pending or a.casting then return end
@@ -951,17 +1055,68 @@ Think = function(sim, a)
   local i, ab
   for i = 1, table.getn(list) do
     ab = list[i]
-    if Usable(sim, a, ab) then a.pending = sim:After(React(sim, a), Act, {a, ab}); return end
+    if Usable(sim, a, ab) then a.pendingAb = ab; a.pending = sim:After(React(sim, a), Act, a); return end
   end
   -- Nothing to do now: wake up when a cooldown, the global cooldown or the execute phase ends.
-  local wake = nil
-  local function Consider(t) if t and t > sim.t + 0.00001 and (not wake or t < wake) then wake = t end end
-  Consider(a.gcdEnd); Consider(a.executeAt); Consider(a.stanceReady)
-  for i = 1, table.getn(list) do Consider(a.cdReady[list[i].name]) end
+  local wake, now, t = nil, sim.t + 0.00001, nil
+  for i = -2, table.getn(list) do
+    if i == -2 then t = a.gcdEnd elseif i == -1 then t = a.executeAt elseif i == 0 then t = a.stanceReady else t = a.cdReady[list[i].name] end
+    if t and t > now and (not wake or t < wake) then wake = t end
+  end
   if wake and (not a.wakeEv or a.wakeEv.dead or a.wakeEv.t > wake) then
     if a.wakeEv then a.wakeEv.dead = true end
     a.wakeEv = sim:At(wake, Wake, a)
   end
+end
+
+---------------------------------------------------------------------------
+-- The boss hitting you (tanking): avoidance, rage from damage taken, Revenge.
+---------------------------------------------------------------------------
+local function BossSwing(sim, a)
+  local c, cfg = a.char, a.cfg
+  a.bossEvent = sim:After(cfg.bossSpeed, BossSwing, a)
+  local diff = (cfg.targetLevel * 5) - c.defense           -- boss weapon skill vs your defense
+  local roll = sim.rng:Next() * 100
+  local tmp = max(5 - diff * 0.04, 0)
+  if roll < tmp then sim:Count("boss.miss"); return end
+  tmp = tmp + max(c.dodge - 0.6, 0)
+  if roll < tmp then sim:Count("boss.dodge"); a.revengeUntil = sim.t + 5; Think(sim, a); return end
+  tmp = tmp + max(c.parry - 0.6, 0)
+  if roll < tmp then sim:Count("boss.parry"); a.revengeUntil = sim.t + 5; Think(sim, a); return end
+  local blocked = false
+  if c.shield then
+    local bonus = (a.bonusBlockUntil and sim.t < a.bonusBlockUntil) and (a.bonusBlock or 0) or 0
+    tmp = tmp + max(c.block - 0.6, 0) + bonus
+    if roll < tmp then blocked = true end
+    a.bonusBlockUntil = nil
+  end
+  local dmg = sim.rng:Range(cfg.bossMin, cfg.bossMax)
+  local crit = false
+  if not blocked then
+    tmp = tmp + max(5 + diff * 0.04, 0)
+    if roll < tmp then crit = true; dmg = dmg * 2
+    else tmp = tmp + 15; if roll < tmp then dmg = dmg * 1.5; sim:Count("boss.crushing") end end
+  end
+  local armor = c.playerArmor
+  dmg = dmg * (1 - min(armor / (armor + 400 + 85 * cfg.targetLevel), 0.75))
+  if a.stance == "defensive" then dmg = dmg * 0.9 end
+  if blocked then
+    dmg = max(dmg - a.blockValue, 0); sim:Count("boss.block"); a.revengeUntil = sim.t + 5
+    local ss = c.talents["Shield Specialization"] or 0
+    if ss > 0 then AddRage(sim, a, ss, "shieldSpec") end
+  elseif crit then
+    sim:Count("boss.crit")
+    if (c.talents["Enrage"] or 0) > 0 then a.auras["Enrage"]:Apply(8) end
+  else sim:Count("boss.hit") end
+  sim:Count("damageTaken", dmg)
+  AddRage(sim, a, dmg / a.rageConv * 2.5, "damageTaken")
+  Think(sim, a)
+end
+
+function W.IsTanking(char, cfg)
+  if cfg.tanking == "on" then return true end
+  if cfg.tanking == "off" then return false end
+  return char.shield and true or false
 end
 
 ---------------------------------------------------------------------------
@@ -972,7 +1127,7 @@ function W.Setup(sim, char, cfg)
   local a = {char = char, cfg = cfg, mh = char.mh, oh = char.oh, mods = {}, auras = sim.auras, cdReady = {},
     rage = cfg.startRage or 0, gcdEnd = 0, stanceReady = 0, dodgeUntil = 0, extra = 0, sweeping = 0,
     targets = max(1, cfg.targets or 1), front = (cfg.position == "front"), def = cfg.targetLevel * 5,
-    stance = rot.stance, rot = rot}
+    stance = rot.stance, rot = rot, revengeUntil = 0}
   a.rageCap = 100 + 10 * (char.talents["Boundless Anger"] or 0)
   a.rageConv = RageConversion(char.level)
   a.flurryRank = char.talents["Flurry"] or 0
@@ -980,10 +1135,11 @@ function W.Setup(sim, char, cfg)
   a.reactMin = max(0, (cfg.reaction or 250) - 50) / 1000; a.reactMax = ((cfg.reaction or 250) + 50) / 1000
   a.executeAt = cfg.duration * (1 - (cfg.executePct or 20) / 100)
   a.useHS = cfg.useHeroicStrike ~= false
+  a.hsInfo = HSInfo(a)
   a.normalList = Known(char, rot.normal)
   a.execList = Known(char, rot.exec)
   a.shoutDuration = 120 * (1 + 0.12 * (char.talents["Booming Voice"] or 0))
-  local shoutAP = floor(Rank60(char.level, {{1, 15}, {12, 35}, {22, 55}, {32, 85}, {42, 130}, {52, 185}, {60, 232}}) * (1 + 0.05 * (char.talents["Improved Shouts"] or 0))) + (char.set.battleShout or 0)
+  local shoutAP = floor(Rank60(char.level, T14) * (1 + 0.05 * (char.talents["Improved Shouts"] or 0))) + (char.set.battleShout or 0)
   ModAura(sim, a, "Battle Shout", {stats = {ap = shoutAP}})
   ModAura(sim, a, "Death Wish", {})
   ModAura(sim, a, "Enrage", {})
@@ -995,6 +1151,8 @@ function W.Setup(sim, char, cfg)
   S.NewAura(sim, "Deep Wounds")
   S.NewAura(sim, "Bloodrage")
   S.NewAura(sim, "Rend")
+  S.NewAura(sim, "Sunder Armor", nil, function(s, au) a.mods["Sunder Armor"] = nil; Recalc(a) end)
+  a.tanking = W.IsTanking(char, cfg)
   Recalc(a)
   return a
 end
@@ -1004,7 +1162,8 @@ function W.Start(sim, a)
   if a.char.level >= 1 then a.auras["Battle Shout"]:Apply(a.shoutDuration) end
   ScheduleMH(sim, a, 0)
   if a.oh then a.ohEvent = sim:At(a.oh.speed / a.haste / 2, OffHandSwing, a) end
-  sim:At(a.executeAt, function(s, x) Think(s, x) end, a)
+  sim:At(a.executeAt, Think, a)
+  if a.tanking then a.bossEvent = sim:At(sim.rng:Range(0, a.cfg.bossSpeed), BossSwing, a) end
   Think(sim, a)
 end
 
@@ -1033,5 +1192,8 @@ function W.Accuracy(char, cfg)
   for i = 1, table.getn(char.unsupported) do table.insert(reasons, "SIM EFFECT NOT IMPLEMENTED: "..char.unsupported[i]) end
   if rot.partial then table.insert(reasons, rot.partial) end
   if cfg.position == "front" then table.insert(reasons, "Boss parry chance is a setting, not confirmed for Turtle.") end
+  if (rot.key == "prot" or (rot.key == "custom" and cfg.custom and cfg.custom["Revenge"])) and not W.IsTanking(char, cfg) then
+    table.insert(reasons, "Revenge needs the boss attacking you - turn on Tanking in the settings.")
+  end
   return (table.getn(reasons) == 0) and "HIGH" or "PARTIAL", reasons, rot
 end
