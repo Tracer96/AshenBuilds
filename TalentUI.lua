@@ -170,6 +170,7 @@ function AB:CreateTalentUI()
 
   local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton"); frame.closeButton = close
   close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
+  self:AddChrome(frame, title); self:AddChrome(frame, close)
 
   self.talentSummary = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   self.talentSummary:SetPoint("TOP", title, "BOTTOM", 0, -8)

@@ -5,7 +5,7 @@ local function MakeBackdrop(frame) AB:WindowBackdrop(frame) end
 -- WoW's screen is only 768 units tall at UI scale 1.0, so the larger windows
 -- shrink to fit on open and stay clamped on-screen while dragged.
 function AB:FitToScreen(frame)
-  if frame.docked then return end   -- docked tab views take the planner's scale
+  if frame.embedded then return end
   local s=math.min(1,(UIParent:GetWidth()*0.96)/frame:GetWidth(),(UIParent:GetHeight()*0.94)/frame:GetHeight())
   frame:SetScale(s)
 end
@@ -21,6 +21,7 @@ end
 -- focus away from text boxes in the windows behind it, so typing never lands
 -- in a window you are no longer looking at.
 function AB:FocusWindow(frame)
+  if frame.embedded then frame=self.frame end
   if frame.Raise then frame:Raise() end
   local i,w
   for i=1,table.getn(self.windows) do w=self.windows[i]; if w~=frame then ClearWindowFocus(w) end end
@@ -117,11 +118,13 @@ function AB:CreateGearSlot(parent,slot,x,y,side)
   self.slotButtons[slot]=b
 end
 
-local FRAME_H,SET_FULL,SET_COMPACT=900,148,40
+-- The window is wide enough for the three talent trees; the planner keeps its
+-- original 980px layout on a page centred inside it.
+local FRAME_W,PLANNER_W,FRAME_H,SET_FULL,SET_COMPACT=1060,980,900,148,40
 
 function AB:CreateUI()
   if self.frame then return end
-  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(980); f:SetHeight(FRAME_H); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.frame=f
+  local f=CreateFrame("Frame","AshenBuildsFrame",UIParent); f:SetWidth(FRAME_W); f:SetHeight(FRAME_H); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true}); f:Hide(); self.frame=f
   -- Focus keeps the Ashen sigil centred behind the title, cropping rather than stretching the art.
   self:ApplyEmberBackground(f,10,0.33,0.45,0.30); self:AddEmberHeader(f,116); self:AddEmberFloor(f,44)
   local title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); title:SetPoint("TOP",f,"TOP",0,-16); title:SetText("ASHEN BUILDS  |cff8d96a8v"..self.VERSION.."|r"); title:SetTextColor(1,.45,.16)
@@ -159,12 +162,15 @@ function AB:CreateUI()
   self.savedBuildsButton:SetPoint("RIGHT",self.itemDatabaseButton,"LEFT",-3,0)
   self.communityButton:SetPoint("RIGHT",self.savedBuildsButton,"LEFT",-3,0)
 
+  -- Everything below the header belongs to the Planner tab.
+  local page=CreateFrame("Frame",nil,f); page:SetWidth(PLANNER_W); page:SetHeight(FRAME_H); page:SetPoint("TOP",f,"TOP",0,0); self.plannerPage=page
+
   self.slotButtons={}
   local leftSlots={"HEAD","NECK","SHOULDER","BACK","CHEST","SHIRT","TABARD","WRIST"}; local rightSlots={"HANDS","WAIST","LEGS","FEET","FINGER1","FINGER2","TRINKET1","TRINKET2"}; local i
-  for i=1,table.getn(leftSlots) do self:CreateGearSlot(f,leftSlots[i],50,-140-(i-1)*58,"left") end
-  for i=1,table.getn(rightSlots) do self:CreateGearSlot(f,rightSlots[i],775,-140-(i-1)*58,"right") end
+  for i=1,table.getn(leftSlots) do self:CreateGearSlot(page,leftSlots[i],50,-140-(i-1)*58,"left") end
+  for i=1,table.getn(rightSlots) do self:CreateGearSlot(page,rightSlots[i],775,-140-(i-1)*58,"right") end
 
-  local stats=CreateFrame("Frame",nil,f); stats:SetWidth(520); stats:SetHeight(490); stats:SetPoint("TOP",f,"TOP",0,-132); self:StylePanel(stats,"sheer"); self.statsPanel=stats
+  local stats=CreateFrame("Frame",nil,page); stats:SetWidth(520); stats:SetHeight(490); stats:SetPoint("TOP",f,"TOP",0,-132); self:StylePanel(stats,"sheer"); self.statsPanel=stats
   -- Header switch between the totals and a 3D preview of the gear.
   local function HeaderTab(text,w,view)
     local b=CreateFrame("Button",nil,stats); b:SetWidth(w); b:SetHeight(20); b.view=view
@@ -186,11 +192,11 @@ function AB:CreateUI()
   end
   self:CreateModelPreview(stats)
 
-  self:CreateGearSlot(f,"MAINHAND",0,0,"left"); self.slotButtons.MAINHAND:ClearAllPoints(); self.slotButtons.MAINHAND:SetPoint("TOPLEFT",stats,"BOTTOMLEFT",17,-10)
-  self:CreateGearSlot(f,"OFFHAND",0,0,"left"); self.slotButtons.OFFHAND:ClearAllPoints(); self.slotButtons.OFFHAND:SetPoint("LEFT",self.slotButtons.MAINHAND,"RIGHT",10,0)
-  self:CreateGearSlot(f,"RANGED",0,0,"left"); self.slotButtons.RANGED:ClearAllPoints(); self.slotButtons.RANGED:SetPoint("LEFT",self.slotButtons.OFFHAND,"RIGHT",10,0)
+  self:CreateGearSlot(page,"MAINHAND",0,0,"left"); self.slotButtons.MAINHAND:ClearAllPoints(); self.slotButtons.MAINHAND:SetPoint("TOPLEFT",stats,"BOTTOMLEFT",17,-10)
+  self:CreateGearSlot(page,"OFFHAND",0,0,"left"); self.slotButtons.OFFHAND:ClearAllPoints(); self.slotButtons.OFFHAND:SetPoint("LEFT",self.slotButtons.MAINHAND,"RIGHT",10,0)
+  self:CreateGearSlot(page,"RANGED",0,0,"left"); self.slotButtons.RANGED:ClearAllPoints(); self.slotButtons.RANGED:SetPoint("LEFT",self.slotButtons.OFFHAND,"RIGHT",10,0)
 
-  local setPanel=CreateFrame("Frame",nil,f); setPanel:SetWidth(880); setPanel:SetHeight(SET_FULL); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); self:StylePanel(setPanel,"panel"); self.setPanel=setPanel
+  local setPanel=CreateFrame("Frame",nil,page); setPanel:SetWidth(880); setPanel:SetHeight(SET_FULL); setPanel:SetPoint("TOP",self.slotButtons.OFFHAND,"BOTTOM",0,-10); self:StylePanel(setPanel,"panel"); self.setPanel=setPanel
   local sh=setPanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); sh:SetPoint("TOPLEFT",setPanel,"TOPLEFT",12,-9); sh:SetText("SET BONUSES"); sh:SetTextColor(g[1],g[2],g[3])
   self.setEmptyText=setPanel:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); self.setEmptyText:SetPoint("LEFT",sh,"RIGHT",14,0); self.setEmptyText:SetText("No item set pieces equipped."); self.setEmptyText:SetTextColor(AB.THEME.dim[1],AB.THEME.dim[2],AB.THEME.dim[3])
   local scroll=CreateFrame("ScrollFrame","AshenBuildsSetScrollFrame",setPanel,"UIPanelScrollFrameTemplate"); scroll:SetPoint("TOPLEFT",setPanel,"TOPLEFT",10,-26); scroll:SetPoint("BOTTOMRIGHT",setPanel,"BOTTOMRIGHT",-29,9); self.setScroll=scroll
@@ -554,12 +560,9 @@ end
 function AB:SetSetPanelCompact(compact)
   if self.setCompact==compact then return end
   self.setCompact=compact
-  -- The window only shrinks with the set panel on the planner view; tab views need the full height.
-  local docked=self.ActiveView and self:ActiveView()
-  if compact then self.setPanel:SetHeight(SET_COMPACT); self.setScroll:Hide(); self.setEmptyText:Show(); if not docked then self.frame:SetHeight(FRAME_H-(SET_FULL-SET_COMPACT)) end
-  else self.setPanel:SetHeight(SET_FULL); self.setScroll:Show(); self.setEmptyText:Hide(); self.frame:SetHeight(FRAME_H) end
-  self:ApplyEmberBackground(self.frame,10,0.33,0.45,0.30)
-  if self.frame:IsShown() then self:FitToScreen(self.frame) end
+  if compact then self.setPanel:SetHeight(SET_COMPACT); self.setScroll:Hide(); self.setEmptyText:Show()
+  else self.setPanel:SetHeight(SET_FULL); self.setScroll:Show(); self.setEmptyText:Hide() end
+  self:ApplyWindowHeight()
 end
 
 function AB:RefreshSetBonuses()
@@ -608,7 +611,7 @@ function AB:RefreshBuildList()
       row.buildName=name; pub=self.IsBuildPublished and self:IsBuildPublished(name)
       local label=name
       if self.current.savedName==name then label="|cffffd100> |r"..label end
-      if pub then label=label.."  |cffffd100public|r" end
+      if pub then label=label.."  |cffffd100public|r" else local alt=self.PublishedByAlt and self:PublishedByAlt(name); if alt then label=label.."  |cffbdb8adpublic as "..alt.."|r" end end
       row.text:SetText(label); row.publish:SetText(pub and "Unpublish" or "Publish"); row:Show()
     else row.buildName=nil; row:Hide() end
   end
@@ -633,7 +636,7 @@ function AB:CreateBuildBrowser()
   self:SetupWindow(f,{wheel=function() AB.buildOffset=math.max(0,(AB.buildOffset or 0)-arg1); AB:RefreshBuildList() end}); f:Hide(); self.buildBrowser=f
   self:ApplyEmberBackground(f,10,0.33,0.4,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-72,-22,58)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-18); t:SetText("SAVED BUILDS")
-  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close
+  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close; self:AddChrome(f,t); self:AddChrome(f,close)
   self.buildCountText=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); self.buildCountText:SetPoint("TOP",f,"TOP",0,-50); self.buildCountText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
   self.buildRows={}; local i
   for i=1,BUILD_ROWS do
@@ -674,7 +677,7 @@ function AB:CreateItemBrowser()
   local f=CreateFrame("Frame","AshenBuildsItemBrowser",UIParent); f:SetWidth(880); f:SetHeight(700); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true,wheel=function() AB:ScrollItemPage(arg1) end}); f:Hide(); self.itemBrowser=f
   self:ApplyEmberBackground(f,10,0.55,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-190,-22,48)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-17); t:SetText("ITEM DATABASE"); self.itemBrowserTitle=t
-  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close
+  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close; self:AddChrome(f,t); self:AddChrome(f,close)
   -- Search typing is debounced; everything else refreshes on the next frame.
   f:SetScript("OnUpdate",function() if AB.itemRefreshAt and GetTime()>=AB.itemRefreshAt then AB.itemRefreshAt=nil; AB.itemPage=1; AB:RefreshItemResults() end end)
 
@@ -694,7 +697,7 @@ function AB:CreateItemBrowser()
     getText=function() return LabelOf(SLOT_FILTERS,AB.itemFilter.slot) end,
     isChecked=function(v) return AB.itemFilter.slot==v end,
     onSelect=function(v) AB.itemFilter.slot=v; AB.browserSlot=v; AB:QueueItemRefresh(0) end})
-  self.slotDrop:SetPoint("TOPLEFT",f,"TOPLEFT",26,y); self:Caption(f,"Equipment Slot",self.slotDrop)
+  self.slotDrop:SetPoint("TOPLEFT",f,"TOPLEFT",26,y); self.slotCaption=self:Caption(f,"Equipment Slot",self.slotDrop)
 
   local levelBoxes=0
   local function LevelBox(anchor,x)
@@ -808,6 +811,7 @@ function AB:OpenItemBrowser(slot)
   slot=slot or "ALL"
   self.browserSlot=slot; self.itemFilter.slot=FILTER_SLOT_OF[slot] or slot; self.itemPage=1
   self.itemBrowserTitle:SetText(slot=="ALL" and "ITEM DATABASE" or ("ITEM DATABASE  |cff8d96a8-  "..self.SLOT_LABELS[slot].."|r"))
+  self.slotCaption:SetText(slot=="ALL" and "Equipment Slot" or ("Choosing for: |cffffffff"..self.SLOT_LABELS[slot].."|r"))
   self.itemSearch:SetText("")
   self:SyncItemFilterControls()
   self.itemBrowser:Show()
@@ -1008,150 +1012,156 @@ function AB:ShowCodeDialog(title,text,isImport) self.codeDialog.title:SetText(ti
 function AB:ToggleUI() if self.frame:IsShown() then self.frame:Hide() else self:RefreshUI(); self.frame:Show() end end
 
 ---------------------------------------------------------------------------
--- Top-bar tabs. Planner, Talents, Community, Saved Builds and Item Database
--- are views inside the main window: the other windows are docked under the
--- tab strip, and the gear view hides while one of them is showing. Anything
--- that hides a docked view (picking an item, loading a build) returns to the
--- planner.
+-- Tabs. Talents, Item Database, Saved Builds and Community are pages inside
+-- the main window instead of separate windows. Each is still built as a window
+-- by its Create* function; EmbedPage then moves it under the tab strip and
+-- hides its window decoration. One page is visible at a time, and the Planner
+-- page is shown whenever no other page is (e.g. after picking an item for a
+-- slot or loading a build).
 ---------------------------------------------------------------------------
+local PAGE_TOP=-130   -- top of the page area, just under the tab strip
+
 local function HookScript(frame,script,fn)
   local old=frame:GetScript(script)
   frame:SetScript(script,function() if old then old() end; fn() end)
 end
 
--- The gear view: slots, character totals / model, set bonuses and the simulator.
-function AB:PlannerWidgets()
-  local list={self.statsPanel,self.setPanel,self.simPanel}
-  local slot,b
-  for slot,b in pairs(self.slotButtons or {}) do table.insert(list,b) end
-  return list
+-- Frame levels are fixed when a frame is created, so a reparented window keeps
+-- levels from its old life. Re-level the whole tree above the main window while
+-- keeping each child's offset from its parent (talent buttons sit above their
+-- tree panels, and so on).
+local function Relevel(frame,level)
+  local old=frame:GetFrameLevel(); frame:SetFrameLevel(level)
+  local kids={frame:GetChildren()}; local i
+  for i=1,table.getn(kids) do Relevel(kids[i],level+math.max(1,kids[i]:GetFrameLevel()-old)) end
 end
 
-function AB:ActiveView()
-  local i
-  for i=1,table.getn(self.tabs or {}) do local t=self.tabs[i]; if t.frame and t.frame:IsShown() then return t end end
-  return nil
-end
-
-function AB:ShowPlannerView(show)
-  local list=self:PlannerWidgets(); local i
-  -- The 3D preview loses its model while hidden: hand it back now and dress it again on return.
-  if not show and self.statsView=="preview" then self:ReturnModel(); self.previewArea.unitLoaded=false end
-  for i=1,table.getn(list) do if list[i] then if show then list[i]:Show() else list[i]:Hide() end end end
-  if show then
-    self:RefreshUI()
-    if self.statsView=="preview" then self:SetStatsView("preview") end
-  else self.frame:SetHeight(FRAME_H) end
+-- cut: height of the window's own title strip. It ends up above the page area,
+-- hidden behind the tab strip, so page content starts right under the tabs.
+-- fill: stretch over the whole page area (list pages); otherwise keep the
+-- window's size, centred (the talent trees have a fixed layout).
+function AB:EmbedPage(frame,cut,fill)
+  local i,t
+  frame.embedded=true
+  -- No longer a separate window: Escape closes the whole planner, and only the
+  -- main window is dragged, fitted to the screen and raised.
+  for i=table.getn(self.windows),1,-1 do if self.windows[i]==frame then table.remove(self.windows,i) end end
+  for i=table.getn(UISpecialFrames),1,-1 do if UISpecialFrames[i]==frame:GetName() then table.remove(UISpecialFrames,i) end end
+  frame:SetParent(self.frame); frame:SetScale(1); frame:ClearAllPoints()
+  if fill then
+    frame:SetPoint("TOPLEFT",self.frame,"TOPLEFT",12,PAGE_TOP+cut)
+    frame:SetPoint("BOTTOMRIGHT",self.frame,"BOTTOMRIGHT",-12,12)
+  else
+    frame:SetPoint("TOP",self.frame,"TOP",0,PAGE_TOP+cut)
+  end
+  frame:SetFrameStrata(self.frame:GetFrameStrata()); Relevel(frame,self.frame:GetFrameLevel()+1)
+  if frame.SetToplevel then frame:SetToplevel(false) end
+  frame:SetMovable(false)
+  -- Clicks on the page's empty space fall through to the main window, so the
+  -- tabs under the hidden title strip stay clickable and dragging still works.
+  frame:EnableMouse(false)
+  frame:SetBackdrop(nil)
+  if frame.emberScrim then frame.emberScrim:Hide() end
+  for i,t in pairs(frame.emberTiles or {}) do t:Hide() end
+  for i,t in pairs(frame.innerRule or {}) do t:Hide() end
+  for i,t in pairs(frame.chrome or {}) do t:Hide() end
 end
 
 function AB:RefreshTabStates()
-  local active=self:ActiveView(); local i,t
-  for i=1,table.getn(self.tabs or {}) do
-    t=self.tabs[i]
-    if t.frame then self:SetTabActive(t.button,t.frame:IsShown()) else self:SetTabActive(t.button,active==nil) end
-  end
+  local i,t
+  for i=1,table.getn(self.tabs or {}) do t=self.tabs[i]; self:SetTabActive(t.button,t.frame:IsShown()) end
 end
 
--- Puts a window inside the planner under the tab strip: no close button,
--- no dragging, and Escape closes the whole planner rather than just the view.
--- Every frame inside a window, with its level relative to the window.
-local function CollectFrames(frame,base,out)
-  local kids={frame:GetChildren()}; local i
-  for i=1,table.getn(kids) do
-    table.insert(out,{kids[i],kids[i]:GetFrameLevel()-base})
-    CollectFrames(kids[i],base,out)
-  end
-  return out
+-- The Planner's set-bonus panel shrinks when empty, which shortens the window;
+-- other pages always get the full height.
+function AB:ApplyWindowHeight()
+  local h=FRAME_H
+  if self.plannerPage:IsShown() and self.setCompact then h=FRAME_H-(SET_FULL-SET_COMPACT) end
+  if self.frame:GetHeight()==h then return end
+  self.frame:SetHeight(h)
+  self:ApplyEmberBackground(self.frame,10,0.33,0.45,0.30)
+  if self.frame:IsShown() then self:FitToScreen(self.frame) end
 end
 
--- fill: stretch the window over the whole tab area (list views); otherwise it keeps
--- its size and sits centred under the tabs (the talent trees have a fixed layout).
-function AB:DockWindow(win,scale,fill)
-  win.docked=true
-  scale=scale or 1
-  -- Levels of everything inside, relative to the window, before it moves.
-  local frames=CollectFrames(win,win:GetFrameLevel(),{})
-  win:SetParent(self.frame); win:ClearAllPoints(); win:SetScale(scale)
-  if fill then
-    win:SetPoint("TOPLEFT",self.frame,"TOPLEFT",12/scale,-130/scale)
-    win:SetPoint("BOTTOMRIGHT",self.frame,"BOTTOMRIGHT",-12/scale,12/scale)
-  else
-    win:SetPoint("TOP",self.frame,"TOP",0,-132/scale)
-  end
-  win:SetMovable(false); win:SetScript("OnDragStart",nil); win:SetScript("OnDragStop",nil)
-  -- WoW does not carry a frame's level down to its children, so the window and
-  -- everything in it are re-levelled together above the planner.
-  local strata=self.frame:GetFrameStrata()
-  local base=self.frame:GetFrameLevel()+2
-  win:SetFrameStrata(strata); win:SetFrameLevel(base)
+function AB:OnPageShown(frame)
+  local i,t
+  for i=1,table.getn(self.tabs) do t=self.tabs[i]; if t.frame~=frame and t.frame:IsShown() then t.frame:Hide() end end
+  self:RefreshTabStates(); self:ApplyWindowHeight()
+end
+
+function AB:OnPageHidden()
   local i
-  for i=1,table.getn(frames) do frames[i][1]:SetFrameStrata(strata); frames[i][1]:SetFrameLevel(base+math.max(1,frames[i][2])) end
-  if win.closeButton then win.closeButton:Hide() end
-  local name,i=win:GetName()
-  for i=table.getn(UISpecialFrames),1,-1 do if UISpecialFrames[i]==name then table.remove(UISpecialFrames,i) end end
-  win:Hide()
-  HookScript(win,"OnShow",function()
-    local j
-    for j=1,table.getn(AB.tabs) do local t=AB.tabs[j]; if t.frame and t.frame~=win and t.frame:IsShown() then t.frame:Hide() end end
-    AB:ShowPlannerView(false); AB:RefreshTabStates()
-  end)
-  HookScript(win,"OnHide",function()
-    if not AB:ActiveView() then AB:ShowPlannerView(true) end
-    AB:RefreshTabStates()
-  end)
+  for i=1,table.getn(self.tabs) do if self.tabs[i].frame:IsShown() then self:RefreshTabStates(); return end end
+  self.plannerPage:Show()
 end
 
-function AB:AddTab(button,frame,open,isOpen)
-  self.tabs=self.tabs or {}
-  local tab={button=button,frame=frame,open=open,isOpen=isOpen}
+function AB:AddTab(key,button,frame,open,isOpen)
+  local tab={key=key,button=button,frame=frame,open=open,isOpen=isOpen}
   table.insert(self.tabs,tab)
-  button:SetScript("OnClick",function() AB:ToggleTab(tab) end)
+  button:SetScript("OnClick",function() AB:SelectTab(tab) end)
+  HookScript(frame,"OnShow",function() AB:OnPageShown(this) end)
+  HookScript(frame,"OnHide",function() AB:OnPageHidden() end)
+  return tab
 end
 
-function AB:ToggleTab(tab)
-  if not tab.frame then
-    -- Planner: close whichever view is open.
-    local active=self:ActiveView()
-    if active then active.frame:Hide(); PlaySound("igCharacterInfoTab") end
-    return
-  end
-  if tab.frame:IsShown() and (not tab.isOpen or tab.isOpen()) then
-    tab.frame:Hide(); PlaySound("igCharacterInfoTab"); return
-  end
+-- Clicking the open tab does nothing, except that the item database switches
+-- from choosing an item for one slot back to browsing everything.
+function AB:SelectTab(tab)
+  if tab.frame:IsShown() and (not tab.isOpen or tab.isOpen()) then return end
   tab.open(); PlaySound("igCharacterInfoTab")
-  self:RefreshTabStates()
+end
+AB.ToggleTab=AB.SelectTab
+
+function AB:ShowTab(key)
+  local i; for i=1,table.getn(self.tabs or {}) do if self.tabs[i].key==key then self:SelectTab(self.tabs[i]) end end
 end
 
 -- Called once every window exists (after Talent and Community UIs have been built).
 function AB:SetupTabs()
   if self.tabs then return end
-  local f=self.frame
-  self.plannerTabButton=MakeButton(f,"PLANNER",86,26)
-  -- Flat tabs sitting on the header rule, right-aligned in reading order.
-  local order={self.plannerTabButton,self.talentOpenButton,self.communityButton,self.savedBuildsButton,self.itemDatabaseButton}
-  local i
-  for i=1,table.getn(order) do if order[i] then self:StyleTab(order[i]); order[i]:SetHeight(26) end end
-  if self.talentOpenButton then self.talentOpenButton:ClearAllPoints(); self.talentOpenButton:SetWidth(92); self.talentOpenButton:SetPoint("RIGHT",self.communityButton,"LEFT",-3,0) end
-  self.plannerTabButton:ClearAllPoints(); self.plannerTabButton:SetPoint("RIGHT",self.talentOpenButton or self.communityButton,"LEFT",-3,0)
-  self:AddTab(self.plannerTabButton,nil)
+  self.tabs={}
+  self.plannerButton=MakeButton(self.frame,"PLANNER",84,26)
+  -- Left to right: Planner, Talents, Item Database, Saved Builds, Community.
+  local order={self.plannerButton,self.talentOpenButton,self.itemDatabaseButton,self.savedBuildsButton,self.communityButton}
+  local widths={84,84,118,112,104}
+  local i,prev
+  for i=table.getn(order),1,-1 do
+    local b=order[i]
+    if b then
+      self:StyleTab(b); b:SetWidth(widths[i]); b:SetHeight(26); b:ClearAllPoints()
+      if prev then b:SetPoint("RIGHT",prev,"LEFT",-3,0) else b:SetPoint("BOTTOMRIGHT",self.frame,"TOPRIGHT",-24,PAGE_TOP+4) end
+      prev=b
+    end
+  end
+
+  local page=self.plannerPage
+  self:AddTab("planner",self.plannerButton,page,function() page:Show() end)
+  -- The 3D preview borrows the game's Dressing Room model: hand it back while
+  -- another page is showing and take it again on return.
+  HookScript(page,"OnHide",function() if AB.statsView=="preview" then AB:ReturnModel() end end)
+  HookScript(page,"OnShow",function() if AB.statsView=="preview" then AB:SetStatsView("preview") end end)
+
   if self.talentOpenButton and self.talentFrame then
-    -- The talent window is wider than the planner, so it is shown slightly smaller.
-    self:DockWindow(self.talentFrame,math.min(1,(f:GetWidth()-20)/self.talentFrame:GetWidth()))
-    self:AddTab(self.talentOpenButton,self.talentFrame,function() AB.talentFrame:Show(); AB:RefreshTalentUI() end)
+    self:EmbedPage(self.talentFrame,36)
+    self:AddTab("talents",self.talentOpenButton,self.talentFrame,function() AB.talentFrame:Show(); AB:RefreshTalentUI() end)
   end
+  self:EmbedPage(self.itemBrowser,40,true)
+  self:AddTab("items",self.itemDatabaseButton,self.itemBrowser,function() AB:OpenItemBrowser("ALL") end,function() return AB.browserSlot=="ALL" end)
+  self:EmbedPage(self.buildBrowser,40,true)
+  self:AddTab("saved",self.savedBuildsButton,self.buildBrowser,function() AB:OpenBuildBrowser() end)
   if self.communityButton and self.communityFrame then
-    self:DockWindow(self.communityFrame,1,true)
-    self:AddTab(self.communityButton,self.communityFrame,function() AB:OpenCommunity() end)
+    self:EmbedPage(self.communityFrame,40,true)
+    self:AddTab("community",self.communityButton,self.communityFrame,function() AB:OpenCommunity() end)
   end
-  self:DockWindow(self.buildBrowser,1,true)
-  self:AddTab(self.savedBuildsButton,self.buildBrowser,function() AB:OpenBuildBrowser() end)
-  -- The item database doubles as the slot picker: when it is open for a slot, the tab switches it to all items instead of closing it.
-  self:DockWindow(self.itemBrowser,1,true)
-  self:AddTab(self.itemDatabaseButton,self.itemBrowser,function() AB:OpenItemBrowser("ALL") end,function() return AB.browserSlot=="ALL" end)
-  -- Reopening the planner always starts on the gear view.
-  HookScript(f,"OnHide",function() local t=AB:ActiveView(); if t then t.frame:Hide() end end)
+  -- Pages let clicks through (see EmbedPage), so the main window forwards the
+  -- mouse wheel to whichever page is showing (item and community paging, etc.).
+  self.frame:SetScript("OnMouseWheel",function()
+    local i,t,fn
+    for i=1,table.getn(AB.tabs) do t=AB.tabs[i]; fn=t.frame:IsShown() and t.frame:GetScript("OnMouseWheel"); if fn then fn() end end
+  end)
   self:RefreshTabStates()
 end
+
 
 -- v0.6.1 complete item effects and visible sources
 local AB_BIND_COLORS={red={1,0.15,0.15},white={1,1,1}}

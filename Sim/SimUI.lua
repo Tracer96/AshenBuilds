@@ -25,8 +25,10 @@ end
 function AB:CreateSimPanel()
   if self.simPanel or not self.frame then return end
   local f = self.frame
-  local p = CreateFrame("Frame", nil, f); p:SetWidth(155); p:SetHeight(84)
-  p:SetPoint("TOPLEFT", f, "TOPLEFT", 775, -604)
+  -- Part of the Planner page (under Trinket 2), so it hides with the gear on other tabs.
+  local page = self.plannerPage or f
+  local p = CreateFrame("Frame", nil, page); p:SetWidth(155); p:SetHeight(84)
+  p:SetPoint("TOPLEFT", page, "TOPLEFT", 775, -604)
   self.simPanel = p
 
   local run = CreateFrame("Button", nil, p, "UIPanelButtonTemplate"); run:SetWidth(122); run:SetHeight(24)

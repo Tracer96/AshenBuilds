@@ -81,6 +81,14 @@ end
 
 -- Darkened header band with a glowing ember rule underneath, so titles and the
 -- controls that sit directly on the art always have a solid backing.
+-- Remembers window decoration (header band, glow, title, close button...) so
+-- a window embedded as a tab page can hide it. See AB:EmbedPage.
+function AB:AddChrome(frame, region)
+  frame.chrome = frame.chrome or {}
+  table.insert(frame.chrome, region)
+  return region
+end
+
 function AB:AddEmberHeader(frame, height, inset)
   inset = inset or 10
   local band = frame:CreateTexture(nil, "BORDER")
@@ -101,6 +109,7 @@ function AB:AddEmberHeader(frame, height, inset)
   rule:SetPoint("TOPLEFT", band, "BOTTOMLEFT", 0, 0)
   rule:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT", 0, 0)
   rule:SetHeight(1)
+  self:AddChrome(frame, band); self:AddChrome(frame, glow); self:AddChrome(frame, rule)
   return band
 end
 
@@ -114,6 +123,7 @@ function AB:AddEmberFloor(frame, height, inset)
   heat:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", inset, inset)
   heat:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -inset, inset)
   heat:SetHeight(height)
+  self:AddChrome(frame, heat)
   return heat
 end
 
@@ -190,7 +200,7 @@ end
 -- Window frame: a thin ember edge on near-black instead of the grey dialog border,
 -- with a faint inner rule so the ember art reads as a framed plate.
 function AB:WindowBackdrop(frame)
-  frame:SetBackdrop({bgFile = "Interface\Buttons\WHITE8X8", edgeFile = "Interface\Tooltips\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = {left = 4, right = 4, top = 4, bottom = 4}})
+  frame:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = {left = 4, right = 4, top = 4, bottom = 4}})
   frame:SetBackdropColor(0.03, 0.022, 0.018, 0.97)
   frame:SetBackdropBorderColor(0.85, 0.52, 0.26, 1)
   if not frame.innerRule then
@@ -218,9 +228,9 @@ end
 -- Top-bar tabs: flat dark tabs sitting on the header rule; the open tab lights up
 -- with an ember underline and a warmer fill.
 function AB:StyleTab(button)
-  button:SetNormalTexture("Interface\Buttons\WHITE8X8")
-  button:SetPushedTexture("Interface\Buttons\WHITE8X8")
-  button:SetHighlightTexture("Interface\Buttons\WHITE8X8")
+  button:SetNormalTexture("Interface\\Buttons\\WHITE8X8")
+  button:SetPushedTexture("Interface\\Buttons\\WHITE8X8")
+  button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
   local n, p, h = button:GetNormalTexture(), button:GetPushedTexture(), button:GetHighlightTexture()
   if n then n:SetTexCoord(0, 1, 0, 1); n:SetVertexColor(0.08, 0.06, 0.05, 0.92) end
   if p then p:SetTexCoord(0, 1, 0, 1); p:SetVertexColor(0.2, 0.1, 0.05, 0.95) end
@@ -228,7 +238,7 @@ function AB:StyleTab(button)
   if not button.tabEdge then
     local t = self.THEME
     button.tabEdge = CreateFrame("Frame", nil, button); button.tabEdge:SetAllPoints(button)
-    button.tabEdge:SetBackdrop({edgeFile = "Interface\Tooltips\UI-Tooltip-Border", edgeSize = 10, insets = {left = 2, right = 2, top = 2, bottom = 2}})
+    button.tabEdge:SetBackdrop({edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10, insets = {left = 2, right = 2, top = 2, bottom = 2}})
     button.tabEdge:SetBackdropBorderColor(t.borderSoft[1], t.borderSoft[2], t.borderSoft[3], 0.9)
     button.underline = button:CreateTexture(nil, "OVERLAY"); button.underline:SetTexture(t.ember[1], t.ember[2], t.ember[3], 1)
     button.underline:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 3, 1); button.underline:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3, 1); button.underline:SetHeight(2)
