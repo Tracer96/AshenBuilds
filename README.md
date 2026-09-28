@@ -107,11 +107,18 @@ open, click again to close.
   the `%` operator and `string.match`.
 - **Text boxes:** `InputBoxTemplate` edit boxes must be created with a global name, or their border
   textures anchor to the wrong box.
-- **Data regeneration** (all read the Tortoise DB snapshot, `tortoise.sqlite`):
-  - Item database: `Data/AshenDB/tools/build_ashendb.py` (downloads the snapshot).
-  - Set catalog: `tools/rebuild_set_catalog.py`.
-  - Enchants: `python tools/build_enchants.py --database path/to/tortoise.sqlite`. Enchant IDs are part
-    of build codes, so IDs 1–90 are frozen and new enchants use 100000 + spell ID.
+- **Data regeneration.** Every script in `tools/` reads the Tortoise DB snapshot of Turtle's server
+  data (`tortoise.sqlite`); downloads and work files go to `tools/work/`, which git ignores.
+
+  | Script | Writes |
+  |---|---|
+  | `python tools/build_ashendb.py` | Item database in `Data/AshenDB/Data/` (downloads the snapshot; `--database` uses a local copy) |
+  | `python tools/rebuild_compact_sources.py tortoise.sqlite .` | Item drop/vendor/quest sources |
+  | `python tools/rebuild_set_catalog.py tortoise.sqlite Data/SetCatalog.lua --data-version VERSION` | Item sets and their bonuses |
+  | `python tools/build_enchants.py --database tortoise.sqlite` | `Data/Enchants.lua` (IDs 1–90 are frozen because build codes use them; new enchants are 100000 + spell ID) |
+  | `python tools/build_set_effects.py tortoise.sqlite` | Set bonus effects for the simulator, in `Sim/SimItems.lua` |
+
+  Run `rebuild_set_catalog.py` before `build_set_effects.py`, since the second reads the catalog.
 - **Base stats** in `Data/BaseStats.lua` come from the vanilla `player_levelstats` and
   `player_classlevelstats` tables.
 
@@ -133,6 +140,13 @@ open, click again to close.
 | `Data/` | Item database, sets, enchants, base stats, talents |
 
 ## Changelog
+
+### Unreleased
+- Warrior DPS simulator: SIM DPS button with progress bar, breakdown tooltip, per-class settings
+  (boss armor list, buffs, debuffs, rotation, tanking), combat log, set bonuses and item procs from
+  Turtle's server data, Protection abilities.
+- Talent window redesign with the game's tree art and prerequisite arrows.
+- Racial weapon skill bonuses corrected to +3.
 
 ### 0.9.7
 - Enchants generated from the Turtle WoW database (263, including Turtle customs, ring/neck

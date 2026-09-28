@@ -156,13 +156,13 @@ def export(db_path: Path, addon: Path, db_version: str, shard_size=750):
 
 def main():
     ap=argparse.ArgumentParser(description="Download Tortoise DB and build AshenDB item addon")
-    ap.add_argument("--addon-dir",default=str(Path(__file__).resolve().parents[1]))
+    ap.add_argument("--addon-dir",default=str(Path(__file__).resolve().parents[1]/"Data"/"AshenDB"))
     ap.add_argument("--database",help="Use an existing tortoise.sqlite instead of downloading")
     ap.add_argument("--keep",action="store_true")
     args=ap.parse_args()
-    addon=Path(args.addon_dir).resolve(); work=addon/"tools"/"work"; work.mkdir(parents=True,exist_ok=True)
+    addon=Path(args.addon_dir).resolve(); work=Path(__file__).resolve().parent/"work"; work.mkdir(parents=True,exist_ok=True)
     if args.database: db=Path(args.database).resolve(); version="local"
     else: db,version=fetch_database(work,args.keep)
     export(db,addon,version)
-    print("\nAshenDB is ready. Copy the AshenDB folder into Interface\\AddOns\\")
+    print("Item database written to", addon)
 if __name__=="__main__": main()
