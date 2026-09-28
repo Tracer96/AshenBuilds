@@ -105,6 +105,7 @@ local function ShowRowTooltip(row)
   end
   GameTooltip:AddLine(e.votes .. " upvote" .. (e.votes == 1 and "" or "s") .. "  -  published " .. date("%Y-%m-%d", e.ver), 0.85, 0.85, 0.85)
   if not e.confirmed then GameTooltip:AddLine("Passed along by another player; not yet seen from the author.", 1, 0.6, 0.3, 1) end
+  if e.alt then GameTooltip:AddLine("Published by your character " .. e.author .. ". Log in as " .. e.author .. " to withdraw it.", 1, 0.82, 0.28, 1) end
   GameTooltip:AddLine("Left-click to load into the planner.", 0.4, 1, 0.4)
   GameTooltip:Show()
 end
@@ -114,6 +115,11 @@ local function ShowVoteTooltip(button)
   GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
   GameTooltip:SetText(e.voted and "Remove your upvote" or "Upvote this build", 1, 1, 1)
   GameTooltip:Show()
+end
+
+function AB:PromptWithdraw(name)
+  self:ShowPrompt({title = "WITHDRAW BUILD", text = "Withdraw |cffffffff" .. self:MaskProfanity(name) .. "|r from community builds?\nOther players will stop seeing it.",
+    accept = "Withdraw", onAccept = function() AB:UnpublishBuild(name) end})
 end
 
 function AB:CreateCommunityUI()
@@ -180,6 +186,10 @@ function AB:CreateCommunityUI()
     r.vote:SetScript("OnClick", function() local e = this:GetParent().entry; if e then AB:ToggleVote(e.id) end end)
     r.vote:SetScript("OnEnter", function() ShowVoteTooltip(this) end); r.vote:SetScript("OnLeave", function() GameTooltip:Hide() end)
     r.votes = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.votes:SetPoint("LEFT", r, "LEFT", COLUMNS[6].x + 24, 0); r.votes:SetWidth(COLUMNS[6].w - 24); r.votes:SetJustifyH("LEFT")
+    -- Your own builds get Withdraw in place of the vote arrow. It works from the
+    -- list itself, so a build can be withdrawn even if its saved copy is gone.
+    r.withdraw = Button(r, "Withdraw", 70, 20); r.withdraw:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+    r.withdraw:SetScript("OnClick", function() local e = this:GetParent().entry; if e then AB:PromptWithdraw(e.name) end end)
     r:SetScript("OnClick", function() local e = this.entry; if e then AB:ConfirmDiscard(AB:MaskProfanity(e.name), function() AB:LoadCommunityBuild(e.id); AB:ShowTab("planner") end) end end)
     r:SetScript("OnEnter", function() ShowRowTooltip(this) end); r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     self.communityRows[i] = r
@@ -215,13 +225,13 @@ function AB:RefreshCommunityList()
     row = self.communityRows[i]; e = list[(self.communityPage - 1) * ROWS + i]; row.entry = e
     if e then
       row.name:SetText(AB:MaskProfanity(e.name))
-      row.author:SetText("by " .. e.author .. (e.mine and "  (you)" or ""))
+      row.author:SetText("by " .. e.author .. (e.mine and "  (you)" or (e.alt and "  (your character)" or "")))
       r, g, b = ClassColor(e.class); row.cells.class:SetText(e.class); row.cells.class:SetTextColor(r, g, b)
       row.cells.race:SetText(e.race); row.cells.level:SetText(tostring(e.level)); row.cells.spec:SetText(SpecText(e))
       if e.mine then
-        row.vote:Hide(); row.votes:SetText(e.votes .. "  |cffbdb8adyours|r"); row.votes:SetTextColor(1, 1, 1)
+        row.vote:Hide(); row.withdraw:Show(); row.votes:SetText(e.votes); row.votes:SetTextColor(1, 1, 1)
       else
-        row.vote:Show()
+        row.vote:Show(); row.withdraw:Hide()
         t = row.vote:GetNormalTexture()
         -- Voted state is shown by both colour and the word "voted", not colour alone.
         if e.voted then

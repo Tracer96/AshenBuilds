@@ -90,7 +90,9 @@ local function DB()
   AshenBuildsDB = AshenBuildsDB or {}
   local c = AshenBuildsDB.community
   if not c then c = {}; AshenBuildsDB.community = c end
-  c.builds = c.builds or {}; c.mine = c.mine or {}; c.votes = c.votes or {}; c.tomb = c.tomb or {}
+  -- chars: this account's characters. SavedVariables are shared by every
+  -- character on the account, so "mine" always means "authored by this character".
+  c.builds = c.builds or {}; c.votes = c.votes or {}; c.tomb = c.tomb or {}; c.chars = c.chars or {}
   return c
 end
 
@@ -225,7 +227,9 @@ local function PruneCatalog()
   local c, cutoff, id, e = DB(), Now() - EXPIRE, nil, nil
   local me = Me()
   for id, e in pairs(c.builds) do
-    if e.author ~= me and (e.seen or 0) < cutoff then c.builds[id] = nil; c.votes[id] = nil end
+    -- Never prune builds published by any of this account's characters: the
+    -- record is what lets that character withdraw it later.
+    if not c.chars[e.author] and (e.seen or 0) < cutoff then c.builds[id] = nil; c.votes[id] = nil end
   end
   local v, voter, r
   for id, v in pairs(c.votes) do
@@ -243,7 +247,18 @@ end
 ---------------------------------------------------------------------------
 -- Publishing and voting (local actions)
 ---------------------------------------------------------------------------
-function AB:IsBuildPublished(name) return DB().mine[name] ~= nil end
+-- Published = this character has a build of that name in the catalog. Worked
+-- out from the catalog rather than a separate flag, which went stale when the
+-- account's characters shared it (an alt could "withdraw" the main's build).
+function AB:IsBuildPublished(name) return DB().builds[BuildId(Me(), name)] ~= nil end
+
+-- Another of this account's characters that has published a build of this name.
+function AB:PublishedByAlt(name)
+  local c, me, id, e = DB(), Me(), nil, nil
+  for id, e in pairs(c.builds) do
+    if e.name == name and e.author ~= me and c.chars[e.author] then return e.author end
+  end
+end
 
 local function AnnounceOwn(name)
   local c, me = DB(), Me()
@@ -259,7 +274,7 @@ function AB:PublishBuild(name)
     return
   end
   if self:IsProfane(name) then
-    self.Print("That build name contains language that isn't allowed in community builds. Rename it and publish again.")
+    self.Print("That build name contains language that isn't allowed in community builds (|cffffffff" .. self:MaskProfanity(name) .. "|r). Rename it and publish again.")
     return
   end
   local c, me = DB(), Me()
@@ -267,7 +282,6 @@ function AB:PublishBuild(name)
   local old = c.builds[id]
   if old and old.ver >= ver then ver = old.ver + 1 end
   c.tomb[id] = nil
-  c.mine[name] = true
   local code = self:ExportBuild(saved)
   c.builds[id] = {id = id, author = me, name = name, ver = ver, code = code, confirmed = true, seen = Now(),
     class = saved.class, race = saved.race, level = self:GetBuildLevel(saved), spec = saved.spec, talents = self:GetTalentSplit(saved)}
@@ -278,11 +292,14 @@ end
 
 function AB:UnpublishBuild(name)
   local c, me = DB(), Me()
-  if not c.mine[name] then return end
+  if not self:IsBuildPublished(name) then
+    local alt = self:PublishedByAlt(name)
+    if alt then self.Print("|cffffffff" .. name .. "|r was published by " .. alt .. ". Log in as " .. alt .. " to withdraw it.") end
+    return
+  end
   local id = BuildId(me, name)
   local ver = Now(); local e = c.builds[id]
   if e and e.ver >= ver then ver = e.ver + 1 end
-  c.mine[name] = nil
   RemoveBuild(id, ver)
   Send("U~" .. Enc(ver) .. "~" .. name)
   self.Print("Withdrew |cffffffff" .. name .. "|r from community builds.")
@@ -313,7 +330,7 @@ end
 function AB:GetCommunityBuilds()
   local list, me, id, e = {}, Me(), nil, nil
   for id, e in pairs(DB().builds) do
-    e.votes = self:GetVoteCount(id); e.mine = (e.author == me); e.voted = self:HasVoted(id)
+    e.votes = self:GetVoteCount(id); e.mine = (e.author == me); e.alt = not e.mine and DB().chars[e.author] and true or false; e.voted = self:HasVoted(id)
     table.insert(list, e)
   end
   return list
@@ -367,7 +384,8 @@ local function AnnounceAllOwn()
   if now - lastAnnounce < ANNOUNCE_COOLDOWN then return end
   lastAnnounce = now
   local c, me, name, id, t = DB(), Me(), nil, nil, nil
-  for name in pairs(c.mine) do AnnounceOwn(name) end
+  local e
+  for id, e in pairs(c.builds) do if e.author == me then AnnounceOwn(e.name) end end
   AnnounceOwnVotes()
   -- Repeat our recent withdrawals so players who were offline drop them too.
   local prefix = me .. ":"
@@ -532,8 +550,15 @@ events:RegisterEvent("CHAT_MSG_ADDON")
 events:RegisterEvent("CHAT_MSG_CHANNEL")
 events:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" and arg1 == "AshenBuilds" then
-    DB(); PruneCatalog()
+    DB()
   elseif event == "PLAYER_ENTERING_WORLD" then
+    -- The character's name is only reliable once in the world, so record it and
+    -- prune here. The old name-only "published" list is replaced by the catalog.
+    if not events.pruned then
+      events.pruned = true
+      local c = DB(); c.chars[Me()] = true; c.mine = nil
+      PruneCatalog()
+    end
     -- Joining late keeps General/Trade on their usual channel numbers.
     if not events.started then events.started = true; After(8, "join", EnsureChannel) end
   elseif event == "CHAT_MSG_ADDON" then

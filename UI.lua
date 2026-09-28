@@ -611,7 +611,7 @@ function AB:RefreshBuildList()
       row.buildName=name; pub=self.IsBuildPublished and self:IsBuildPublished(name)
       local label=name
       if self.current.savedName==name then label="|cffffd100> |r"..label end
-      if pub then label=label.."  |cffffd100public|r" end
+      if pub then label=label.."  |cffffd100public|r" else local alt=self.PublishedByAlt and self:PublishedByAlt(name); if alt then label=label.."  |cffbdb8adpublic as "..alt.."|r" end end
       row.text:SetText(label); row.publish:SetText(pub and "Unpublish" or "Publish"); row:Show()
     else row.buildName=nil; row:Hide() end
   end
