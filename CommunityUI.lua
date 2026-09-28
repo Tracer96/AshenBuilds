@@ -159,12 +159,12 @@ function AB:CreateCommunityUI()
     self.communityHeaders[i] = h
   end
   local rule = f:CreateTexture(nil, "ARTWORK"); local d = self.THEME.divider
-  rule:SetTexture(d[1], d[2], d[3], d[4]); rule:SetPoint("TOPLEFT", f, "TOPLEFT", 28, -106); rule:SetWidth(704); rule:SetHeight(1)
+  rule:SetTexture(d[1], d[2], d[3], d[4]); rule:SetPoint("TOPLEFT", f, "TOPLEFT", 28, -106); rule:SetPoint("RIGHT", f, "RIGHT", -28, 0); rule:SetWidth(704); rule:SetHeight(1)
 
   self.communityRows = {}
   local r, fs, j
   for i = 1, ROWS do
-    r = CreateFrame("Button", nil, f); r:SetWidth(700); r:SetHeight(32); r:SetPoint("TOPLEFT", f, "TOPLEFT", 30, ROW_TOP - (i - 1) * ROW_STEP)
+    r = CreateFrame("Button", nil, f); r:SetWidth(700); r:SetHeight(32); r:SetPoint("TOPLEFT", f, "TOPLEFT", 30, ROW_TOP - (i - 1) * ROW_STEP); r:SetPoint("RIGHT", f, "RIGHT", -30, 0)
     r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
     r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name:SetPoint("TOPLEFT", r, "TOPLEFT", COLUMNS[1].x, -2); r.name:SetWidth(COLUMNS[1].w); r.name:SetJustifyH("LEFT")
     r.author = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.author:SetPoint("TOPLEFT", r.name, "BOTTOMLEFT", 0, -1); r.author:SetWidth(COLUMNS[1].w); r.author:SetJustifyH("LEFT"); Muted(r.author)

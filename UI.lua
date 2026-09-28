@@ -637,7 +637,7 @@ function AB:CreateBuildBrowser()
   self.buildCountText=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); self.buildCountText:SetPoint("TOP",f,"TOP",0,-50); self.buildCountText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
   self.buildRows={}; local i
   for i=1,BUILD_ROWS do
-    local r=CreateFrame("Button",nil,f); r:SetWidth(506); r:SetHeight(32); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-78-(i-1)*36); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    local r=CreateFrame("Button",nil,f); r:SetWidth(506); r:SetHeight(32); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-78-(i-1)*36); r:SetPoint("RIGHT",f,"RIGHT",-28,0); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
     r.text=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.text:SetPoint("LEFT",r,"LEFT",8,0); r.text:SetWidth(240); r.text:SetJustifyH("LEFT")
     r.publish=MakeButton(r,"Publish",82,22); r.publish:SetPoint("RIGHT",r,"RIGHT",-2,0); r.publish:SetScript("OnClick",function() local n=this:GetParent().buildName; if not n then return end; if AB:IsBuildPublished(n) then AB:UnpublishBuild(n) else AB:PublishBuild(n) end end)
     r.delete=MakeButton(r,"Delete",66,22); r.delete:SetPoint("RIGHT",r.publish,"LEFT",-4,0); r.delete:SetScript("OnClick",function() local n=this:GetParent().buildName; if n then AB:PromptDeleteBuild(n) end end)
@@ -752,7 +752,7 @@ function AB:CreateItemBrowser()
   -- Results
   self.itemRows={}
   for i=1,ITEM_ROWS do
-    local r=CreateFrame("Button",nil,f); r:SetWidth(820); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-196-(i-1)*38); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    local r=CreateFrame("Button",nil,f); r:SetWidth(820); r:SetHeight(36); r:SetPoint("TOPLEFT",f,"TOPLEFT",28,-196-(i-1)*38); r:SetPoint("RIGHT",f,"RIGHT",-28,0); r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
     r.icon=r:CreateTexture(nil,"ARTWORK"); r.icon:SetWidth(30); r.icon:SetHeight(30); r.icon:SetPoint("LEFT",r,"LEFT",2,0)
     r.name=r:CreateFontString(nil,"OVERLAY","GameFontHighlight"); r.name:SetPoint("TOPLEFT",r.icon,"TOPRIGHT",8,-1); r.name:SetWidth(520); r.name:SetJustifyH("LEFT")
     r.meta=r:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); r.meta:SetPoint("TOPRIGHT",r,"TOPRIGHT",-6,-3); r.meta:SetWidth(250); r.meta:SetJustifyH("RIGHT"); r.meta:SetTextColor(.64,.67,.72)
@@ -1035,8 +1035,13 @@ end
 
 function AB:ShowPlannerView(show)
   local list=self:PlannerWidgets(); local i
+  -- The 3D preview loses its model while hidden: hand it back now and dress it again on return.
+  if not show and self.statsView=="preview" then self:ReturnModel(); self.previewArea.unitLoaded=false end
   for i=1,table.getn(list) do if list[i] then if show then list[i]:Show() else list[i]:Hide() end end end
-  if show then self:RefreshUI() else self.frame:SetHeight(FRAME_H) end
+  if show then
+    self:RefreshUI()
+    if self.statsView=="preview" then self:SetStatsView("preview") end
+  else self.frame:SetHeight(FRAME_H) end
 end
 
 function AB:RefreshTabStates()
@@ -1049,12 +1054,38 @@ end
 
 -- Puts a window inside the planner under the tab strip: no close button,
 -- no dragging, and Escape closes the whole planner rather than just the view.
-function AB:DockWindow(win,scale)
+-- Every frame inside a window, with its level relative to the window.
+local function CollectFrames(frame,base,out)
+  local kids={frame:GetChildren()}; local i
+  for i=1,table.getn(kids) do
+    table.insert(out,{kids[i],kids[i]:GetFrameLevel()-base})
+    CollectFrames(kids[i],base,out)
+  end
+  return out
+end
+
+-- fill: stretch the window over the whole tab area (list views); otherwise it keeps
+-- its size and sits centred under the tabs (the talent trees have a fixed layout).
+function AB:DockWindow(win,scale,fill)
   win.docked=true
-  win:SetParent(self.frame); win:ClearAllPoints(); win:SetPoint("TOP",self.frame,"TOP",0,-132/(scale or 1))
-  win:SetScale(scale or 1)
+  scale=scale or 1
+  -- Levels of everything inside, relative to the window, before it moves.
+  local frames=CollectFrames(win,win:GetFrameLevel(),{})
+  win:SetParent(self.frame); win:ClearAllPoints(); win:SetScale(scale)
+  if fill then
+    win:SetPoint("TOPLEFT",self.frame,"TOPLEFT",12/scale,-130/scale)
+    win:SetPoint("BOTTOMRIGHT",self.frame,"BOTTOMRIGHT",-12/scale,12/scale)
+  else
+    win:SetPoint("TOP",self.frame,"TOP",0,-132/scale)
+  end
   win:SetMovable(false); win:SetScript("OnDragStart",nil); win:SetScript("OnDragStop",nil)
-  win:SetFrameStrata(self.frame:GetFrameStrata()); win:SetFrameLevel(self.frame:GetFrameLevel()+5)
+  -- WoW does not carry a frame's level down to its children, so the window and
+  -- everything in it are re-levelled together above the planner.
+  local strata=self.frame:GetFrameStrata()
+  local base=self.frame:GetFrameLevel()+2
+  win:SetFrameStrata(strata); win:SetFrameLevel(base)
+  local i
+  for i=1,table.getn(frames) do frames[i][1]:SetFrameStrata(strata); frames[i][1]:SetFrameLevel(base+math.max(1,frames[i][2])) end
   if win.closeButton then win.closeButton:Hide() end
   local name,i=win:GetName()
   for i=table.getn(UISpecialFrames),1,-1 do if UISpecialFrames[i]==name then table.remove(UISpecialFrames,i) end end
@@ -1109,13 +1140,13 @@ function AB:SetupTabs()
     self:AddTab(self.talentOpenButton,self.talentFrame,function() AB.talentFrame:Show(); AB:RefreshTalentUI() end)
   end
   if self.communityButton and self.communityFrame then
-    self:DockWindow(self.communityFrame)
+    self:DockWindow(self.communityFrame,1,true)
     self:AddTab(self.communityButton,self.communityFrame,function() AB:OpenCommunity() end)
   end
-  self:DockWindow(self.buildBrowser)
+  self:DockWindow(self.buildBrowser,1,true)
   self:AddTab(self.savedBuildsButton,self.buildBrowser,function() AB:OpenBuildBrowser() end)
   -- The item database doubles as the slot picker: when it is open for a slot, the tab switches it to all items instead of closing it.
-  self:DockWindow(self.itemBrowser)
+  self:DockWindow(self.itemBrowser,1,true)
   self:AddTab(self.itemDatabaseButton,self.itemBrowser,function() AB:OpenItemBrowser("ALL") end,function() return AB.browserSlot=="ALL" end)
   -- Reopening the planner always starts on the gear view.
   HookScript(f,"OnHide",function() local t=AB:ActiveView(); if t then t.frame:Hide() end end)
