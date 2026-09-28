@@ -68,9 +68,10 @@ Type `/ab` in game, or click the ember icon on the minimap.
   threshold, raid buffs, consumables and target debuffs.
 - Every fight uses a fixed seed, so re-simming after a gear change compares the same fights and the
   tooltip shows the exact DPS change.
-- **Accuracy** is HIGH only when every equipped effect is simulated. Anything that isn't (on-use
-  trinkets, unusual set bonuses, Revenge/Shield Slam) is listed as *SIM EFFECT NOT IMPLEMENTED* and
-  the result is marked PARTIAL.
+- Arms, Fury (dual-wield and two-hand) and Protection rotations, including Shield Slam, Revenge
+  (with the boss hitting you), Slam and Overpower. Set bonuses and weapon procs are included.
+- **Accuracy** is HIGH only when every equipped effect is simulated. Anything that isn't (for example
+  on-use trinkets) is listed as *SIM EFFECT NOT IMPLEMENTED* and the result is marked PARTIAL.
 - Mechanics come from Turtle's server data where possible and otherwise from the maintained Turtle
   WarriorSim. The combat log window lists the source and status of each one.
 
