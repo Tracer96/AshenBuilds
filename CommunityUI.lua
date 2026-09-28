@@ -128,6 +128,7 @@ function AB:CreateCommunityUI()
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("COMMUNITY BUILDS")
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+  self:AddChrome(f, title); self:AddChrome(f, close)
 
   local searchLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); searchLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 28, -54); searchLabel:SetText("SEARCH")
   local search = CreateFrame("EditBox", "AshenBuildsCommunitySearch", f, "InputBoxTemplate")
@@ -179,7 +180,7 @@ function AB:CreateCommunityUI()
     r.vote:SetScript("OnClick", function() local e = this:GetParent().entry; if e then AB:ToggleVote(e.id) end end)
     r.vote:SetScript("OnEnter", function() ShowVoteTooltip(this) end); r.vote:SetScript("OnLeave", function() GameTooltip:Hide() end)
     r.votes = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.votes:SetPoint("LEFT", r, "LEFT", COLUMNS[6].x + 24, 0); r.votes:SetWidth(COLUMNS[6].w - 24); r.votes:SetJustifyH("LEFT")
-    r:SetScript("OnClick", function() local e = this.entry; if e then AB:ConfirmDiscard(AB:MaskProfanity(e.name), function() AB:LoadCommunityBuild(e.id) end) end end)
+    r:SetScript("OnClick", function() local e = this.entry; if e then AB:ConfirmDiscard(AB:MaskProfanity(e.name), function() AB:LoadCommunityBuild(e.id); AB:ShowTab("planner") end) end end)
     r:SetScript("OnEnter", function() ShowRowTooltip(this) end); r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     self.communityRows[i] = r
   end
