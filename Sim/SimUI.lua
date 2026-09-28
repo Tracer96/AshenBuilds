@@ -127,7 +127,10 @@ function AB:ToggleSim()
   local class = self.current.class
   local p = self.simPanel
   p.bar:SetValue(0); p.bar.text:SetText("0%")
-  S.Start({model = model, char = char, cfg = cfg, iterations = cfg.iterations, seed = cfg.seed,
+  -- Same seed = same fights, so re-simming a build gives the same number and build changes compare cleanly.
+  local seed = cfg.seed
+  if cfg.randomSeed then seed = math.floor(math.mod(GetTime() * 1000, 2000000000)) + 1 end
+  S.Start({model = model, char = char, cfg = cfg, iterations = cfg.iterations, seed = seed,
     onProgress = function(i, n) p.bar:SetValue(i / n); p.bar.text:SetText(math.floor(100 * i / n).."%") end,
     onDone = function(sum)
       local mean, sd, lo, hi = S.Stats(sum)
@@ -425,6 +428,11 @@ function AB:CreateSimSettings(model)
   end
   Check("Use Heroic Strike / Cleave", 20, -390 + ROT_Y, function() return C().useHeroicStrike end, function(on) C().useHeroicStrike = on end)
   Check("Enrage from Bloodrage (reference)", 20, -410 + ROT_Y, function() return C().enrageOnBloodrage end, function(on) C().enrageOnBloodrage = on end)
+  local rs = Check("New random fights each run", 258, -742, function() return C().randomSeed end, function(on) C().randomSeed = on end)
+  rs:SetScript("OnEnter", function() GameTooltip:SetOwner(this, "ANCHOR_RIGHT"); GameTooltip:SetText("New random fights each run", 1, .82, 0)
+    GameTooltip:AddLine("Off: every run replays the same fights, so the same build always gives the same DPS and a gear change shows its exact effect.", .9, .9, .9, 1)
+    GameTooltip:AddLine("On: each run uses new fights and the number moves a little within its confidence range.", .9, .9, .9, 1); GameTooltip:Show() end)
+  rs:SetScript("OnLeave", function() GameTooltip:Hide() end)
   local ch = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ch:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -438 + ROT_Y); ch:SetText("Abilities (ticking one switches to Custom):")
   for i = 1, table.getn(model.CUSTOM_ABILITIES) do
     local name = model.CUSTOM_ABILITIES[i]

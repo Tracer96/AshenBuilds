@@ -55,6 +55,7 @@ M("revenge", V, "DB", "82-100 at 60, 5 rage, 6 sec cooldown (-0.5/1/1.5 Improved
 M("concussionBlow", V, "DB", "235 at 60, ignores armor, 20 sec cooldown, no cost, generates 10 rage.")
 M("sunderArmor", V, "DB", "450 armor per stack, 5 stacks, 30 sec, 10 rage. Only used when the Sunder debuff is not already assumed in the settings.")
 M("tanking", L, "classic formulas + settings", "Boss swings at the speed and damage in the settings. Avoidance vs a level 63 boss = your sheet dodge/parry/block - 0.6%; 15% crushing blows; rage from damage taken = damage / conversion x 2.5 (reference). Shield Specialization +1..5 rage per block (DB).")
+M("setBonuses", V, "DB", "Set bonus stats (attack power, crit, hit, strength, agility, weapon skill, attack speed) come from each bonus spell's effects; warrior set mechanics (procs, cost and damage changes) are implemented one by one with DB values. '+5 to All Weapons' is encoded as a skill 162 aura and is assumed to cover every weapon (needs live test).")
 M("reaction", R, "reference", "Each decision waits a random reaction time (setting +/- 50 ms).")
 
 local floor, max, min = math.floor, math.max, math.min
@@ -139,7 +140,7 @@ function W.DefaultSettings()
   return {
     duration = 120, targetLevel = 63, targetArmor = 4211, boss = "BWL - All bosses", position = "behind", parry = 14, targets = 1,
     iterations = 1000, reaction = 250, rotation = "auto", hsRage = 30, executePct = 20, startRage = 0,
-    useHeroicStrike = true, enrageOnBloodrage = true, seed = 12345,
+    useHeroicStrike = true, enrageOnBloodrage = true, seed = 12345, randomSeed = false,
     tanking = "auto", bossSpeed = 2.0, bossMin = 1000, bossMax = 1400,
     buffs = {bom=true, kings=true, motw=true, mongoose=true, jujupower=true, jujumight=true, food=true},
     debuffs = {sunder=true, faerie=true, cor=true},
@@ -190,9 +191,43 @@ local SET_PATTERNS = {
 }
 local NO_DPS = {"Armor", "Defense", "Stamina", "Resistance", "resistance", "health", "Health", "block", "parry", "dodge", "Intellect", "Spirit", "mana", "healing", "threat", "Shield Wall", "Taunt"}
 
+-- Warrior set mechanics by bonus spell id (values from the Turtle DB).
+-- Stat-only bonuses come from AshenSim.SetEffects instead.
+local function Add(c, k, v) c.set[k] = (c.set[k] or 0) + v end
+local function SetProc(c, name, proc) table.insert(c.itemProcs, {proc = proc, name = name}) end
+local SET_SPECIAL = {
+  [23563] = function(c) Add(c, "battleShout", 30) end,                     -- Battlegear of Wrath (3)
+  [21890] = function(c) c.set.wrathDiscount = true end,                   -- Battlegear of Wrath (5): 20% next ability -5 rage
+  [23548] = function(c) end,                                              -- Battlegear of Wrath (8): parry after block, no damage effect
+  [41361] = function(c) Add(c, "brotherhood", 5) end,                      -- Brotherhood (3): Sunder/WW/HS -5 rage
+  [24431] = function(c) Add(c, "wwCost", 3) end,                           -- Vindicator's (5)
+  [53200] = function(c) Add(c, "strikeCost", 10) end,                      -- Armor of Might (5): BT/MS -10 rage
+  [51899] = function(c) c.set.mightRage = true end,                       -- Armor of Might (3): 10% on ability hit +15 rage
+  [53206] = function(c) Add(c, "cdCost", 10) end,                          -- Armor of the Dreadnought (2): SS/DW -10 rage
+  [53207] = function(c) Add(c, "abilityCrit", 0.04) end,                   -- Armor of the Dreadnought (4)
+  [53205] = function(c) end,                                              -- threat only
+  [53203] = function(c) c.set.overpowerHaste = true end,                  -- Armor of Wrath (3)
+  [53204] = function(c) Add(c, "wwTargets", 2) end,                        -- Armor of Wrath (8)
+  [52686] = function(c) c.set.unyielding = true end,                      -- Unyielding Strength (3)
+  [22778] = function(c) Add(c, "hamCost", 3) end,                          -- PvP (2)
+  [26109] = function(c) Add(c, "shoutCostPct", 35) end,                    -- Conqueror's (3)
+  [28844] = function(c) Add(c, "revenge", 75) end,                         -- Dreadnaught's (2)
+  [28842] = function(c) Add(c, "protHit", 5) end,                          -- Dreadnaught's (6)
+  [21838] = function(c) c.set.mightDamaged = true end,                    -- Battlegear of Might (5)
+  [49368] = function(c) c.set.thaurissan = true end,                      -- Arms of Thaurissan (2)
+  [45496] = function(c) SetProc(c, "Towerforge Battlegear", {chance = 2, spell = "PowerSurge", src = "DB"}) end,
+  [24256] = function(c) SetProc(c, "Primal Blessing", {chance = 1, spell = "PrimalBlessing", src = "DB"}) end,
+  [9233] = function(c) SetProc(c, "Firebolt (set)", {chance = 5, dmg = 20, magic = true, src = "DB"}) end,
+  [44065] = function(c) SetProc(c, "Lightning (Stormshroud)", {chance = 5, dmg = 42.5, magic = true, src = "DB"}) end,
+  [23863] = function(c) SetProc(c, "Stormshroud Armor", {chance = 2, spell = "Revitalize", src = "DB"}) end,
+}
+
+local SKILL_ALL = {"Sword", "Axe", "Mace", "Dagger", "Fist", "Polearm", "Staff", "TwoHandSword", "TwoHandAxe", "TwoHandMace"}
+
 local function ReadSetBonuses(AB, build, c)
   local counts = AB.GetSetCounts and AB:GetSetCounts(build) or {}
   local setId, n, i, j
+  c.set.skill = {}
   for setId, n in pairs(counts) do
     local set = AB:GetItemSet(setId)
     if set and set.bonuses then
@@ -200,11 +235,29 @@ local function ReadSetBonuses(AB, build, c)
         local b = set.bonuses[i]
         if n >= (b[1] or 99) then
           local text, done = b[3] or "", false
-          for j = 1, table.getn(SET_PATTERNS) do
-            local _, _, v = string.find(text, SET_PATTERNS[j][1])
-            if v then c.set[SET_PATTERNS[j][2]] = (c.set[SET_PATTERNS[j][2]] or 0) + tonumber(v); done = true; break end
+          local e = S.SetEffects and S.SetEffects[b[2]]
+          if SET_SPECIAL[b[2]] then SET_SPECIAL[b[2]](c); done = true
+          elseif e and not e.special then
+            local k, v
+            for k, v in pairs(e) do
+              if k == "haste" then c.set.hastePct = (c.set.hastePct or 0) + v
+              elseif k == "skill" then
+                local wt, sv
+                for wt, sv in pairs(v) do
+                  if wt == "all" then local q; for q = 1, table.getn(SKILL_ALL) do c.set.skill[SKILL_ALL[q]] = (c.set.skill[SKILL_ALL[q]] or 0) + sv end
+                  else c.set.skill[wt] = (c.set.skill[wt] or 0) + sv end
+                end
+              elseif k ~= "none" then c.set[k] = (c.set[k] or 0) + v end
+            end
+            done = true
+          elseif not e then
+            -- Not in the DB table: fall back to reading the bonus text.
+            for j = 1, table.getn(SET_PATTERNS) do
+              local _, _, v = string.find(text, SET_PATTERNS[j][1])
+              if v then c.set[SET_PATTERNS[j][2]] = (c.set[SET_PATTERNS[j][2]] or 0) + tonumber(v); done = true; break end
+            end
           end
-          if not done then
+          if not done and not e then
             for j = 1, table.getn(NO_DPS) do if string.find(text, NO_DPS[j], 1, true) then done = true; break end end
           end
           if not done then table.insert(c.unsupported, (set.name or "Set").." ("..b[1].."): "..text) end
@@ -290,6 +343,15 @@ function W.BuildCharacter(build, cfg)
     end
   end
   ReadSetBonuses(AB, build, c)
+  -- Set weapon skill (the sheet does not include set bonuses).
+  local function SetSkill(w)
+    if not w then return end
+    local key = w.type
+    if w.twoHand and (key == "Sword" or key == "Axe" or key == "Mace") then key = "TwoHand"..key end
+    w.sheetSkill = w.skill
+    w.skill = w.skill + (c.set.skill[key] or 0)
+  end
+  SetSkill(c.mh); SetSkill(c.oh)
 
   -- Buffs and debuffs from the settings.
   local b = {str = 0, agi = 0, ap = 0, crit = 0, statPct = 0, haste = 1, weaponDmg = 0, armor = 0}
@@ -313,7 +375,7 @@ function W.BuildCharacter(build, cfg)
   c.apBase = out.attackPower - 2 * out.str + b.ap   -- attack power not coming from strength
   c.agiCrit = AGI_CRIT[level] or 0.05
   -- The sheet crit includes agility and the main-hand skill bonus; the fight works those out itself.
-  local skillCrit = (c.mh.skill - level * 5) * 0.04
+  local skillCrit = ((c.mh.sheetSkill or c.mh.skill) - level * 5) * 0.04
   c.critBase = out.meleeCrit - skillCrit - out.agi * c.agiCrit + b.crit
   c.hit = out.hit + (c.set.hit or 0)
   c.spellCrit = out.spellCrit or 0
@@ -429,9 +491,9 @@ end
 
 -- Abilities: single-wield miss, optional dodge, then crit (same roll for
 -- "weapon" abilities, a fresh roll for Bloodthirst/Execute).
-local function SpellRoll(sim, a, w, canDodge, sameRoll, extraCrit)
+local function SpellRoll(sim, a, w, canDodge, sameRoll, extraCrit, extraHit)
   local roll = sim.rng:Next() * 100
-  local tmp = MissChance(a, w, false)
+  local tmp = max(MissChance(a, w, false) - (extraHit or 0), 0)
   if roll < tmp then return MISS end
   if canDodge then tmp = tmp + DodgeChance(a, w); if roll < tmp then return DODGE end end
   if a.front then tmp = tmp + a.cfg.parry; if roll < tmp then return PARRY end end
@@ -600,6 +662,15 @@ end
 ---------------------------------------------------------------------------
 -- Swings.
 ---------------------------------------------------------------------------
+-- Set procs that trigger on abilities.
+local function AbilityResult(sim, a, name, result)
+  local set = a.char.set
+  if set.mightRage and Landed(result) and sim.rng:Next() * 100 < 10 then AddRage(sim, a, 15, "setBonus") end
+  if set.unyielding and (result == DODGE or result == PARRY) and (name == "Heroic Strike" or name == "Slam") then AddRage(sim, a, 5, "setBonus") end
+end
+
+local PROT_HIT = {["Sunder Armor"] = true, ["Heroic Strike"] = true, ["Revenge"] = true, ["Shield Slam"] = true}
+
 local function ScheduleMH(sim, a, at)
   if a.mhEvent then a.mhEvent.dead = true end
   a.mhEvent = sim:At(at, MainHandSwing, a)
@@ -612,6 +683,7 @@ local function DoExtraAttack(sim, a)
     a.queued = nil
     ScheduleMH(sim, a, sim.t)
     sim:Count("extraAttacks")
+    if a.char.set.thaurissan then ApplyProcAura(sim, a, "UnrelentingStrikes") end
   end
 end
 
@@ -624,8 +696,12 @@ MainHandSwing = function(sim, a)
   if spell and a.rage < spell.cost then if sim.log then sim:Log(spell.name.." cancelled (not enough rage)") end; spell = nil end
   local result, dmg
   if spell then
-    SpendRage(sim, a, spell.cost, spell.name)
-    result = SpellRoll(sim, a, w, true, true, 0)
+    local cost = spell.cost
+    if a.wrathDiscount then cost = max(0, cost - 5); a.wrathDiscount = nil end
+    SpendRage(sim, a, cost, spell.name)
+    if a.char.set.wrathDiscount and sim.rng:Next() * 100 < 20 then a.wrathDiscount = true end
+    result = SpellRoll(sim, a, w, true, true, 0, PROT_HIT[spell.name] and a.char.set.protHit or 0)
+    AbilityResult(sim, a, spell.name, result)
     dmg = (WeaponDamage(sim, a, w, false) + spell.bonus) * w.mod * a.dmgmod
   else
     result = WhiteRoll(sim, a, w, false)
@@ -734,7 +810,8 @@ local function PhysicalAbility(sim, a, name, dmg, result)
 end
 
 local function StrikeDamage(sim, a, ab, w, dmg, canDodge, sameRoll, extraCrit)
-  local result = SpellRoll(sim, a, w, canDodge, sameRoll, extraCrit)
+  local result = SpellRoll(sim, a, w, canDodge, sameRoll, extraCrit, PROT_HIT[ab.name] and a.char.set.protHit or 0)
+  AbilityResult(sim, a, ab.name, result)
   if Landed(result) then OnHitProcs(sim, a, w, true) end
   if result == DODGE then OpenOverpower(sim, a) end
   if result == CRIT then dmg = dmg * a.abilityCritMult; OnCrit(sim, a) end
@@ -753,24 +830,24 @@ local A = {}
 W.Abilities = A
 
 A["Bloodthirst"] = {name = "Bloodthirst", cd = 6, refund = true, talent = "Bloodthirst",
-  Cost = function(self, a) return 30 end,
+  Cost = function(self, a) return 30 - (a.char.set.strikeCost or 0) end,
   Cast = function(self, sim, a)
     local dmg = (200 + 0.35 * a.ap) * a.dmgmod * a.mh.mod
     StrikeDamage(sim, a, self, a.mh, dmg, true, false, 0)
   end}
 
 A["Mortal Strike"] = {name = "Mortal Strike", cd = 6, refund = true, talent = "Mortal Strike",
-  Cost = function(self, a) return 30 end,
+  Cost = function(self, a) return 30 - (a.char.set.strikeCost or 0) end,
   Cast = function(self, sim, a)
     local pct = Rank60(a.char.level, T5)
     StrikeDamage(sim, a, self, a.mh, WeaponDamage(sim, a, a.mh, true) * pct * a.dmgmod * a.mh.mod, true, true, 0)
   end}
 
 A["Whirlwind"] = {name = "Whirlwind", cd = 10, refund = false, stances = {berserker = true}, level = 36,
-  Cost = function(self, a) return 25 - (a.char.set.brotherhood or 0) end,
+  Cost = function(self, a) return 25 - (a.char.set.brotherhood or 0) - (a.char.set.wwCost or 0) end,
   Cooldown = function(self, a) local r = a.char.talents["Ravager"] or 0; return 10 - (T1[r] or 0) end,
   Cast = function(self, sim, a)
-    local n, i = min(a.targets, 4)
+    local n, i = min(a.targets, 4 + (a.char.set.wwTargets or 0))
     for i = 1, n do
       local dmg = WeaponDamage(sim, a, a.mh, true) * a.dmgmod * a.mh.mod
       local result = SpellRoll(sim, a, a.mh, true, true, 0)
@@ -786,6 +863,7 @@ A["Overpower"] = {name = "Overpower", cd = 5, refund = true, stances = {battle =
   Usable = function(self, sim, a) return sim.t < a.dodgeUntil end,
   Cast = function(self, sim, a)
     a.dodgeUntil = 0
+    if a.char.set.overpowerHaste then ApplyProcAura(sim, a, "OverpoweringRage") end
     local bonus = Rank60(a.char.level, T6)
     local dmg = (WeaponDamage(sim, a, a.mh, true) + bonus) * a.dmgmod * a.mh.mod
     StrikeDamage(sim, a, self, a.mh, dmg, false, true, 25 * (a.char.talents["Improved Overpower"] or 0))
@@ -817,7 +895,7 @@ A["Slam"] = {name = "Slam", cd = 0, refund = true, level = 30,
   end}
 
 A["Hamstring"] = {name = "Hamstring", cd = 0, refund = true, stances = {battle = true, berserker = true}, level = 8, minRage = 50,
-  Cost = function(self, a) return 10 end,
+  Cost = function(self, a) return 10 - (a.char.set.hamCost or 0) end,
   Cast = function(self, sim, a) StrikeDamage(sim, a, self, a.mh, 45 * a.dmgmod * a.mh.mod, true, true, 0) end}
 
 A["Master Strike"] = {name = "Master Strike", cd = 30, refund = true, talent = "Master Strike",
@@ -838,12 +916,12 @@ A["Rend"] = {name = "Rend", cd = 0, refund = true, stances = {battle = true, def
   end}
 
 A["Sweeping Strikes"] = {name = "Sweeping Strikes", buff = true, cd = 30, refund = false, talent = "Sweeping Strikes", stances = {battle = true, berserker = true},
-  Cost = function(self, a) return 20 end,
+  Cost = function(self, a) return 20 - (a.char.set.cdCost or 0) end,
   Usable = function(self, sim, a) return a.targets > 1 end,
   Cast = function(self, sim, a) a.sweeping = 5 end}
 
 A["Death Wish"] = {name = "Death Wish", buff = true, cd = 180, refund = false, talent = "Death Wish",
-  Cost = function(self, a) return 10 end,
+  Cost = function(self, a) return max(0, 10 - (a.char.set.cdCost or 0)) end,
   Cast = function(self, sim, a) a.auras["Death Wish"]:Apply(30) end}
 
 A["Recklessness"] = {name = "Recklessness", buff = true, cd = 1800, refund = false, stances = {berserker = true}, level = 50, noRage = true,
@@ -867,7 +945,7 @@ A["Bloodrage"] = {name = "Bloodrage", buff = true, cd = 60, refund = false, offG
   end}
 
 A["Battle Shout"] = {name = "Battle Shout", buff = true, cd = 0, refund = false,
-  Cost = function(self, a) return 10 end,
+  Cost = function(self, a) return 10 * (1 - (a.char.set.shoutCostPct or 0) / 100) end,
   Usable = function(self, sim, a) return not a.auras["Battle Shout"].active end,
   Cast = function(self, sim, a) a.auras["Battle Shout"]:Apply(a.shoutDuration) end}
 
@@ -890,7 +968,7 @@ A["Revenge"] = {name = "Revenge", cd = 6, refund = true, level = 14, stances = {
     a.revengeUntil = 0
     local base = Rank60(a.char.level, T10)
     local rp = a.char.talents["Reprisal"] or 0
-    local dmg = sim.rng:Range(base[1], base[2]) * (1 + 0.25 * rp) * a.dmgmod * a.mh.mod
+    local dmg = (sim.rng:Range(base[1], base[2]) + (a.char.set.revenge or 0)) * (1 + 0.25 * rp) * a.dmgmod * a.mh.mod
     local result = StrikeDamage(sim, a, self, a.mh, dmg, true, false, 0)
     if Landed(result) and rp > 0 and sim.rng:Next() * 100 < 50 * rp then AddRage(sim, a, 5, "reprisal") end
   end}
@@ -1010,6 +1088,7 @@ local function Usable(sim, a, ab)
   if not Ready(sim, a, ab) then return false end
   if not ab.offGcd and sim.t < a.gcdEnd then return false end
   local cost = ab:Cost(a)
+  if a.wrathDiscount and cost > 0 and not ab.buff then cost = max(0, cost - 5) end
   if a.rage < cost then return false end
   if ab.minRage and a.rage < ab.minRage then return false end
   if not StanceOK(sim, a, ab) then return false end
@@ -1034,7 +1113,10 @@ local function Use(sim, a, ab)
     SwitchStance(sim, a, target)
   end
   local cost = ab:Cost(a)
+  local offensive = cost > 0 and not ab.buff
+  if offensive and a.wrathDiscount then cost = max(0, cost - 5); a.wrathDiscount = nil end
   if cost > 0 then SpendRage(sim, a, cost, ab.name) end
+  if offensive and a.char.set.wrathDiscount and sim.rng:Next() * 100 < 20 then a.wrathDiscount = true end
   a.cdReady[ab.name] = sim.t + (ab.Cooldown and ab:Cooldown(a) or ab.cd)
   if not ab.offGcd then a.gcdEnd = sim.t + (ab.Gcd and ab:Gcd(a) or 1.5) end
   if ab.CastTime then
@@ -1132,6 +1214,7 @@ local function BossSwing(sim, a)
   else sim:Count("boss.hit") end
   sim:Count("damageTaken", dmg)
   AddRage(sim, a, dmg / a.rageConv * 2.5, "damageTaken")
+  if c.set.mightDamaged and dmg > 0 and sim.rng:Next() * 100 < 20 then AddRage(sim, a, 1, "setBonus") end
   Think(sim, a)
 end
 
@@ -1153,7 +1236,7 @@ function W.Setup(sim, char, cfg)
   a.rageCap = 100 + 10 * (char.talents["Boundless Anger"] or 0)
   a.rageConv = RageConversion(char.level)
   a.flurryRank = char.talents["Flurry"] or 0
-  a.abilityCritMult = 1 + 1 * (1 + 0.1 * (char.talents["Impale"] or 0))
+  a.abilityCritMult = 1 + 1 * (1 + 0.1 * (char.talents["Impale"] or 0) + (char.set.abilityCrit or 0))
   a.reactMin = max(0, (cfg.reaction or 250) - 50) / 1000; a.reactMax = ((cfg.reaction or 250) + 50) / 1000
   a.executeAt = cfg.duration * (1 - (cfg.executePct or 20) / 100)
   a.useHS = cfg.useHeroicStrike ~= false
