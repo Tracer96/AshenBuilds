@@ -848,7 +848,12 @@ function W.ResolveRotation(char, cfg)
       name = W.CUSTOM_ABILITIES[i]
       if cfg.custom and cfg.custom[name] then table.insert(normal, name) end
     end
-    for i = 2, table.getn(normal) do if normal[i] ~= "Rend" and normal[i] ~= "Hamstring" then table.insert(exec, normal[i]) end end
+    -- Execute phase: cooldowns, then Bloodthirst/Mortal Strike, then Execute (as the reference sim).
+    local EXEC_KEEP = {["Bloodrage"]=1, ["Death Wish"]=1, ["Recklessness"]=1, ["Berserker Rage"]=1, ["Bloodthirst"]=2, ["Mortal Strike"]=2}
+    local tier
+    for tier = 1, 2 do
+      for i = 2, table.getn(normal) do if EXEC_KEEP[normal[i]] == tier then table.insert(exec, normal[i]) end end
+    end
     table.insert(exec, "Execute")
     local stance = "berserker"
     if cfg.custom and (cfg.custom["Overpower"] or cfg.custom["Rend"]) and not cfg.custom["Whirlwind"] then stance = "battle" end
@@ -940,6 +945,8 @@ Think = function(sim, a)
     if a.rage >= q.cost and a.rage >= a.cfg.hsRage then a.hsPending = sim:After(React(sim, a), QueueHS, a) end
   end
   if a.pending or a.casting then return end
+  -- After a cooldown pulled us out of the rotation's stance, go back as soon as we can.
+  if a.stance ~= a.rot.stance and sim.t >= a.stanceReady then SwitchStance(sim, a, a.rot.stance) end
   local list = InExecute(sim, a) and a.execList or a.normalList
   local i, ab
   for i = 1, table.getn(list) do

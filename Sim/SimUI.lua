@@ -390,11 +390,28 @@ function AB:CreateSimSettings(model)
   end
   Check("Use Heroic Strike / Cleave", 20, -390, function() return C().useHeroicStrike end, function(on) C().useHeroicStrike = on end)
   Check("Enrage from Bloodrage (reference)", 20, -410, function() return C().enrageOnBloodrage end, function(on) C().enrageOnBloodrage = on end)
-  local ch = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ch:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -438); ch:SetText("Custom preset uses:")
+  local ch = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ch:SetPoint("TOPLEFT", f, "TOPLEFT", 22, -438); ch:SetText("Abilities (ticking one switches to Custom):")
   for i = 1, table.getn(model.CUSTOM_ABILITIES) do
     local name = model.CUSTOM_ABILITIES[i]
     local col, row = math.mod(i - 1, 2), math.floor((i - 1) / 2)
-    Check(name, 20 + col * 112, -452 - row * 20, function() return C().custom[name] end, function(on) C().custom[name] = on or nil end)
+    Check(name, 20 + col * 112, -452 - row * 20, function() return C().custom[name] end, function(on)
+      local s = C()
+      -- Choosing abilities only means something for the Custom preset, so switch to it.
+      if s.rotation ~= "custom" then
+        s.rotation = "custom"
+        -- Start the list from the abilities the automatic preset was using.
+        local model2 = model
+        local char = model2.BuildCharacter(AB.current, s)
+        if char then
+          s.custom = {}
+          local auto = model2.ResolveRotation(char, {rotation = "auto"})
+          local k
+          for k = 1, table.getn(auto.normal) do s.custom[auto.normal[k]] = true end
+        end
+      end
+      s.custom[name] = on or nil
+      f.Refresh()
+    end)
   end
 
   Header("BUFFS", 262, -48)
