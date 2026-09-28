@@ -127,7 +127,7 @@ function AB:CreateCommunityUI()
   f:SetScript("OnShow", function() AB:FitToScreen(this); AB:FocusWindow(this); AB:FadeIn(this); AB:UpdateModelMouse(); AB:RefreshCommunityList() end)
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOP", f, "TOP", 0, -17); title:SetText("COMMUNITY BUILDS")
-  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4); f.closeButton = close
 
   local searchLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); searchLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 28, -54); searchLabel:SetText("SEARCH")
   local search = CreateFrame("EditBox", "AshenBuildsCommunitySearch", f, "InputBoxTemplate")

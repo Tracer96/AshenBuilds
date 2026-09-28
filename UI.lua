@@ -5,6 +5,7 @@ local function MakeBackdrop(frame) AB:WindowBackdrop(frame) end
 -- WoW's screen is only 768 units tall at UI scale 1.0, so the larger windows
 -- shrink to fit on open and stay clamped on-screen while dragged.
 function AB:FitToScreen(frame)
+  if frame.docked then return end   -- docked tab views take the planner's scale
   local s=math.min(1,(UIParent:GetWidth()*0.96)/frame:GetWidth(),(UIParent:GetHeight()*0.94)/frame:GetHeight())
   frame:SetScale(s)
 end
@@ -553,7 +554,9 @@ end
 function AB:SetSetPanelCompact(compact)
   if self.setCompact==compact then return end
   self.setCompact=compact
-  if compact then self.setPanel:SetHeight(SET_COMPACT); self.setScroll:Hide(); self.setEmptyText:Show(); self.frame:SetHeight(FRAME_H-(SET_FULL-SET_COMPACT))
+  -- The window only shrinks with the set panel on the planner view; tab views need the full height.
+  local docked=self.ActiveView and self:ActiveView()
+  if compact then self.setPanel:SetHeight(SET_COMPACT); self.setScroll:Hide(); self.setEmptyText:Show(); if not docked then self.frame:SetHeight(FRAME_H-(SET_FULL-SET_COMPACT)) end
   else self.setPanel:SetHeight(SET_FULL); self.setScroll:Show(); self.setEmptyText:Hide(); self.frame:SetHeight(FRAME_H) end
   self:ApplyEmberBackground(self.frame,10,0.33,0.45,0.30)
   if self.frame:IsShown() then self:FitToScreen(self.frame) end
@@ -630,7 +633,7 @@ function AB:CreateBuildBrowser()
   self:SetupWindow(f,{wheel=function() AB.buildOffset=math.max(0,(AB.buildOffset or 0)-arg1); AB:RefreshBuildList() end}); f:Hide(); self.buildBrowser=f
   self:ApplyEmberBackground(f,10,0.33,0.4,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-72,-22,58)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-18); t:SetText("SAVED BUILDS")
-  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
+  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close
   self.buildCountText=f:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); self.buildCountText:SetPoint("TOP",f,"TOP",0,-50); self.buildCountText:SetTextColor(AB.THEME.muted[1],AB.THEME.muted[2],AB.THEME.muted[3])
   self.buildRows={}; local i
   for i=1,BUILD_ROWS do
@@ -671,7 +674,7 @@ function AB:CreateItemBrowser()
   local f=CreateFrame("Frame","AshenBuildsItemBrowser",UIParent); f:SetWidth(880); f:SetHeight(700); f:SetPoint("CENTER",UIParent,"CENTER",0,0); MakeBackdrop(f); self:SetupWindow(f,{fit=true,wheel=function() AB:ScrollItemPage(arg1) end}); f:Hide(); self.itemBrowser=f
   self:ApplyEmberBackground(f,10,0.55,0.5,0.4); self:AddEmberHeader(f,34); self:AddEmberWell(f,22,-190,-22,48)
   local t=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); t:SetPoint("TOP",f,"TOP",0,-17); t:SetText("ITEM DATABASE"); self.itemBrowserTitle=t
-  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4)
+  local close=CreateFrame("Button",nil,f,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",f,"TOPRIGHT",-4,-4); f.closeButton=close
   -- Search typing is debounced; everything else refreshes on the next frame.
   f:SetScript("OnUpdate",function() if AB.itemRefreshAt and GetTime()>=AB.itemRefreshAt then AB.itemRefreshAt=nil; AB.itemPage=1; AB:RefreshItemResults() end end)
 
@@ -1005,21 +1008,66 @@ function AB:ShowCodeDialog(title,text,isImport) self.codeDialog.title:SetText(ti
 function AB:ToggleUI() if self.frame:IsShown() then self.frame:Hide() else self:RefreshUI(); self.frame:Show() end end
 
 ---------------------------------------------------------------------------
--- Top-bar tabs. Each button toggles its window, only one tab window is open
--- at a time, and the open tab's button stays lit however the window closes
--- (its button, the X, or Escape).
+-- Top-bar tabs. Planner, Talents, Community, Saved Builds and Item Database
+-- are views inside the main window: the other windows are docked under the
+-- tab strip, and the gear view hides while one of them is showing. Anything
+-- that hides a docked view (picking an item, loading a build) returns to the
+-- planner.
 ---------------------------------------------------------------------------
 local function HookScript(frame,script,fn)
   local old=frame:GetScript(script)
   frame:SetScript(script,function() if old then old() end; fn() end)
 end
 
+-- The gear view: slots, character totals / model, set bonuses and the simulator.
+function AB:PlannerWidgets()
+  local list={self.statsPanel,self.setPanel,self.simPanel}
+  local slot,b
+  for slot,b in pairs(self.slotButtons or {}) do table.insert(list,b) end
+  return list
+end
+
+function AB:ActiveView()
+  local i
+  for i=1,table.getn(self.tabs or {}) do local t=self.tabs[i]; if t.frame and t.frame:IsShown() then return t end end
+  return nil
+end
+
+function AB:ShowPlannerView(show)
+  local list=self:PlannerWidgets(); local i
+  for i=1,table.getn(list) do if list[i] then if show then list[i]:Show() else list[i]:Hide() end end end
+  if show then self:RefreshUI() else self.frame:SetHeight(FRAME_H) end
+end
+
 function AB:RefreshTabStates()
-  local i,t
+  local active=self:ActiveView(); local i,t
   for i=1,table.getn(self.tabs or {}) do
     t=self.tabs[i]
-    self:SetTabActive(t.button,t.frame:IsShown() and (not t.isOpen or t.isOpen()))
+    if t.frame then self:SetTabActive(t.button,t.frame:IsShown()) else self:SetTabActive(t.button,active==nil) end
   end
+end
+
+-- Puts a window inside the planner under the tab strip: no close button,
+-- no dragging, and Escape closes the whole planner rather than just the view.
+function AB:DockWindow(win,scale)
+  win.docked=true
+  win:SetParent(self.frame); win:ClearAllPoints(); win:SetPoint("TOP",self.frame,"TOP",0,-132/(scale or 1))
+  win:SetScale(scale or 1)
+  win:SetMovable(false); win:SetScript("OnDragStart",nil); win:SetScript("OnDragStop",nil)
+  win:SetFrameStrata(self.frame:GetFrameStrata()); win:SetFrameLevel(self.frame:GetFrameLevel()+5)
+  if win.closeButton then win.closeButton:Hide() end
+  local name,i=win:GetName()
+  for i=table.getn(UISpecialFrames),1,-1 do if UISpecialFrames[i]==name then table.remove(UISpecialFrames,i) end end
+  win:Hide()
+  HookScript(win,"OnShow",function()
+    local j
+    for j=1,table.getn(AB.tabs) do local t=AB.tabs[j]; if t.frame and t.frame~=win and t.frame:IsShown() then t.frame:Hide() end end
+    AB:ShowPlannerView(false); AB:RefreshTabStates()
+  end)
+  HookScript(win,"OnHide",function()
+    if not AB:ActiveView() then AB:ShowPlannerView(true) end
+    AB:RefreshTabStates()
+  end)
 end
 
 function AB:AddTab(button,frame,open,isOpen)
@@ -1027,35 +1075,50 @@ function AB:AddTab(button,frame,open,isOpen)
   local tab={button=button,frame=frame,open=open,isOpen=isOpen}
   table.insert(self.tabs,tab)
   button:SetScript("OnClick",function() AB:ToggleTab(tab) end)
-  HookScript(frame,"OnShow",function() AB:RefreshTabStates() end)
-  HookScript(frame,"OnHide",function() AB:RefreshTabStates() end)
 end
 
 function AB:ToggleTab(tab)
-  if tab.frame:IsShown() and (not tab.isOpen or tab.isOpen()) then
-    tab.frame:Hide(); PlaySound("igCharacterInfoClose"); return
+  if not tab.frame then
+    -- Planner: close whichever view is open.
+    local active=self:ActiveView()
+    if active then active.frame:Hide(); PlaySound("igCharacterInfoTab") end
+    return
   end
-  local i
-  for i=1,table.getn(self.tabs) do if self.tabs[i]~=tab and self.tabs[i].frame:IsShown() then self.tabs[i].frame:Hide() end end
-  tab.open(); self:FocusWindow(tab.frame); PlaySound("igCharacterInfoOpen")
+  if tab.frame:IsShown() and (not tab.isOpen or tab.isOpen()) then
+    tab.frame:Hide(); PlaySound("igCharacterInfoTab"); return
+  end
+  tab.open(); PlaySound("igCharacterInfoTab")
   self:RefreshTabStates()
 end
 
 -- Called once every window exists (after Talent and Community UIs have been built).
 function AB:SetupTabs()
   if self.tabs then return end
+  local f=self.frame
+  self.plannerTabButton=MakeButton(f,"PLANNER",86,26)
   -- Flat tabs sitting on the header rule, right-aligned in reading order.
-  local order={self.talentOpenButton,self.communityButton,self.savedBuildsButton,self.itemDatabaseButton}
+  local order={self.plannerTabButton,self.talentOpenButton,self.communityButton,self.savedBuildsButton,self.itemDatabaseButton}
   local i
   for i=1,table.getn(order) do if order[i] then self:StyleTab(order[i]); order[i]:SetHeight(26) end end
   if self.talentOpenButton then self.talentOpenButton:ClearAllPoints(); self.talentOpenButton:SetWidth(92); self.talentOpenButton:SetPoint("RIGHT",self.communityButton,"LEFT",-3,0) end
+  self.plannerTabButton:ClearAllPoints(); self.plannerTabButton:SetPoint("RIGHT",self.talentOpenButton or self.communityButton,"LEFT",-3,0)
+  self:AddTab(self.plannerTabButton,nil)
   if self.talentOpenButton and self.talentFrame then
+    -- The talent window is wider than the planner, so it is shown slightly smaller.
+    self:DockWindow(self.talentFrame,math.min(1,(f:GetWidth()-20)/self.talentFrame:GetWidth()))
     self:AddTab(self.talentOpenButton,self.talentFrame,function() AB.talentFrame:Show(); AB:RefreshTalentUI() end)
   end
-  if self.communityButton and self.communityFrame then self:AddTab(self.communityButton,self.communityFrame,function() AB:OpenCommunity() end) end
+  if self.communityButton and self.communityFrame then
+    self:DockWindow(self.communityFrame)
+    self:AddTab(self.communityButton,self.communityFrame,function() AB:OpenCommunity() end)
+  end
+  self:DockWindow(self.buildBrowser)
   self:AddTab(self.savedBuildsButton,self.buildBrowser,function() AB:OpenBuildBrowser() end)
   -- The item database doubles as the slot picker: when it is open for a slot, the tab switches it to all items instead of closing it.
+  self:DockWindow(self.itemBrowser)
   self:AddTab(self.itemDatabaseButton,self.itemBrowser,function() AB:OpenItemBrowser("ALL") end,function() return AB.browserSlot=="ALL" end)
+  -- Reopening the planner always starts on the gear view.
+  HookScript(f,"OnHide",function() local t=AB:ActiveView(); if t then t.frame:Hide() end end)
   self:RefreshTabStates()
 end
 

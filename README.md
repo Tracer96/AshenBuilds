@@ -83,8 +83,9 @@ Type `/ab` in game, or click the ember icon on the minimap.
 | Upvote a community build | Click the arrow in the Votes column |
 | Move the minimap button | Drag it around the minimap |
 
-The top-bar buttons (Talents, Community, Saved Builds, Item Database) work as tabs: click once to
-open, click again to close.
+The top bar has five tabs: Planner, Talents, Community, Saved Builds and Item Database. They all
+open inside the main window. Clicking a gear slot opens the Item Database for that slot, and picking
+an item (or loading a saved build) takes you back to the Planner.
 
 ## Slash commands
 
@@ -145,6 +146,7 @@ open, click again to close.
 - Warrior DPS simulator: SIM DPS button with progress bar, breakdown tooltip, per-class settings
   (boss armor list, buffs, debuffs, rotation, tanking), combat log, set bonuses and item procs from
   Turtle's server data, Protection abilities.
+- Talents, Community, Saved Builds and Item Database are tabs inside the main window.
 - Talent window redesign with the game's tree art and prerequisite arrows.
 - Racial weapon skill bonuses corrected to +3.
 

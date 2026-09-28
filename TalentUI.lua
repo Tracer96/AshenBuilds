@@ -168,7 +168,7 @@ function AB:CreateTalentUI()
   title:SetText("ASHEN TALENTS")
   title:SetTextColor(1, 0.45, 0.16)
 
-  local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+  local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton"); frame.closeButton = close
   close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
 
   self.talentSummary = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
