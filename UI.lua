@@ -663,11 +663,12 @@ local QUALITY_FILTERS={-1,5,4,3,2,1,0}
 local SORTS={{"ilvl","Item Level (high)"},{"ilvlUp","Item Level (low)"},{"name","Name (A-Z)"},{"req","Required Level (high)"}}
 local FILTER_STATS={"str","agi","sta","int","spi","armor","ap","rap","crit","hit","haste","spellPower","healing","spellCrit","spellHit","mp5","defense","dodge","parry","block","firePower","frostPower","shadowPower","arcanePower","naturePower","holyPower","spellPen","fireRes","frostRes","natureRes","shadowRes","arcaneRes"}
 local MAX_STAT_FILTERS=4
+local ARMOR_FILTERS={{0,"All Armor"},{1,"Cloth"},{2,"Leather"},{3,"Mail"},{4,"Plate"}}
 
 local function LabelOf(list,value) local i for i=1,table.getn(list) do if list[i][1]==value then return list[i][2] end end return "" end
 
 function AB:ItemFilterDefaults()
-  self.itemFilter={slot="ALL",quality=-1,source=0,minIlvl=nil,maxIlvl=nil,stats={},usable=true,classOnly=true,showHidden=false,sort="ilvl"}
+  self.itemFilter={slot="ALL",quality=-1,source=0,armor=0,minIlvl=nil,maxIlvl=nil,stats={},usable=true,classOnly=true,showHidden=false,sort="ilvl"}
 end
 
 function AB:QueueItemRefresh(delay) self.itemRefreshAt=GetTime()+(delay or 0) end
@@ -709,14 +710,14 @@ function AB:CreateItemBrowser()
   local dash=f:CreateFontString(nil,"OVERLAY","GameFontHighlight"); dash:SetPoint("LEFT",self.minIlvlBox,"RIGHT",4,0); dash:SetText("-")
   self.maxIlvlBox=LevelBox(self.minIlvlBox,18)
 
-  self.sourceDrop=self:CreateDropdown(f,140,{
+  self.sourceDrop=self:CreateDropdown(f,118,{
     items=function() local out={}; local i,s; for i=1,table.getn(AB.SOURCE_FILTERS) do s=AB.SOURCE_FILTERS[i]; table.insert(out,{value=s.value,text=s.text}) end; return out end,
     getText=function() local i; for i=1,table.getn(AB.SOURCE_FILTERS) do if AB.SOURCE_FILTERS[i].value==AB.itemFilter.source then return AB.SOURCE_FILTERS[i].text end end; return "All Sources" end,
     isChecked=function(v) return AB.itemFilter.source==v end,
     onSelect=function(v) AB.itemFilter.source=v; AB:QueueItemRefresh(0) end})
   self.sourceDrop:SetPoint("LEFT",self.maxIlvlBox,"RIGHT",16,0); self:Caption(f,"Source",self.sourceDrop)
 
-  self.qualityDrop=self:CreateDropdown(f,130,{
+  self.qualityDrop=self:CreateDropdown(f,110,{
     items=function() local out={}; local i,q,c; for i=1,table.getn(QUALITY_FILTERS) do q=QUALITY_FILTERS[i]; c=q>=0 and qualityColors[q] or nil; table.insert(out,{value=q,text=q<0 and "All Qualities" or AB.QUALITY_LABELS[q],color=c}) end; return out end,
     getText=function() local q=AB.itemFilter.quality; return q<0 and "All Qualities" or AB.QUALITY_LABELS[q] end,
     isChecked=function(v) return AB.itemFilter.quality==v end,
@@ -729,6 +730,13 @@ function AB:CreateItemBrowser()
     isChecked=function(v) return AB.itemFilter.sort==v end,
     onSelect=function(v) AB.itemFilter.sort=v; AB:QueueItemRefresh(0) end})
   self.sortDrop:SetPoint("LEFT",self.qualityDrop,"RIGHT",12,0); self:Caption(f,"Sort",self.sortDrop)
+
+  self.armorDrop=self:CreateDropdown(f,108,{
+    items=function() local out={}; local i; for i=1,table.getn(ARMOR_FILTERS) do table.insert(out,{value=ARMOR_FILTERS[i][1],text=ARMOR_FILTERS[i][2]}) end; return out end,
+    getText=function() return LabelOf(ARMOR_FILTERS,AB.itemFilter.armor) end,
+    isChecked=function(v) return AB.itemFilter.armor==v end,
+    onSelect=function(v) AB.itemFilter.armor=v; AB:QueueItemRefresh(0) end})
+  self.armorDrop:SetPoint("LEFT",self.sortDrop,"RIGHT",12,0); self:Caption(f,"Armor Type",self.armorDrop)
 
   -- Row 3: stat filters (multi-select) with a minimum per stat
   self.statDrop=self:CreateDropdown(f,140,{multi=true,listWidth=170,
@@ -788,7 +796,7 @@ end
 -- Pushes self.itemFilter into every filter control.
 function AB:SyncItemFilterControls()
   local fl=self.itemFilter
-  self.slotDrop:Refresh(); self.sourceDrop:Refresh(); self.qualityDrop:Refresh(); self.sortDrop:Refresh(); self.statDrop:Refresh()
+  self.slotDrop:Refresh(); self.sourceDrop:Refresh(); self.qualityDrop:Refresh(); self.sortDrop:Refresh(); self.armorDrop:Refresh(); self.statDrop:Refresh()
   self.usableCheck:SetChecked(fl.usable and 1 or nil); self.classCheck:SetChecked(fl.classOnly and 1 or nil); self.hiddenCheck:SetChecked(fl.showHidden and 1 or nil)
   self.minIlvlBox:SetText(fl.minIlvl and tostring(fl.minIlvl) or ""); self.maxIlvlBox:SetText(fl.maxIlvl and tostring(fl.maxIlvl) or "")
   local i,c,s
@@ -825,7 +833,8 @@ function AB:RefreshItemResults()
   fl.minIlvl=tonumber(self.minIlvlBox:GetText() or ""); fl.maxIlvl=tonumber(self.maxIlvlBox:GetText() or "")
   local idx=self.ItemIndex
   local matches=idx:Query({slot=fl.slot,query=string.lower(self.itemSearch:GetText() or ""),quality=fl.quality,minIlvl=fl.minIlvl,maxIlvl=fl.maxIlvl,source=fl.source,stats=fl.stats,
-    maxReq=fl.usable and self:GetBuildLevel() or nil,class=fl.classOnly and self.current.class or nil,showHidden=fl.showHidden})
+    maxReq=fl.usable and self:GetBuildLevel() or nil,class=fl.classOnly and self.current.class or nil,showHidden=fl.showHidden,
+    level=fl.usable and self:GetBuildLevel() or nil,armor=(fl.armor or 0)>0 and fl.armor or nil})
   if fl.sort=="ilvlUp" then
     local n=table.getn(matches); local i; for i=1,math.floor(n/2) do matches[i],matches[n-i+1]=matches[n-i+1],matches[i] end
   elseif fl.sort=="name" then

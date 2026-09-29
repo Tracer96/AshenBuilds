@@ -18,6 +18,8 @@ Type `/ab` in game, or click the ember icon on the minimap.
 
 ### Planner
 - Any class, race (including High Elf and Goblin) and level 1–60.
+- A new plan starts as your character (class, race and level) and follows your level until you change
+  it or add gear. Each character keeps its own plan open in the planner.
 - 19 equipment slots with item tooltips that match the game, including set pieces and set bonuses.
 - **Character totals** use the real vanilla base stats for every class, race and level, plus the
   vmangos formulas that BetterCharacterStats reads back from the client: health and mana from stamina
@@ -34,7 +36,9 @@ Type `/ab` in game, or click the ember icon on the minimap.
 
 ### Item database
 - Every equippable item, searchable by name, NPC or zone.
-- Dropdown filters for slot, source (dungeon, raid, quest, world boss, crafted, reputation, PvP, world
+- **Usable at build level** (on by default) hides items above the build level, quest rewards from
+  quests above it, and armor or weapons the class can't use yet (plate and mail at 40, dual wield).
+- Dropdown filters for slot, armor type (cloth, leather, mail, plate), source (dungeon, raid, quest, world boss, crafted, reputation, PvP, world
   drop, vendor), quality and sort order, plus an item level range and up to four stat filters with
   minimum values.
 - Filtering is near-instant: items are indexed in the background right after login.
