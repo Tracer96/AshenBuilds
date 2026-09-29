@@ -731,7 +731,8 @@ eventFrame:SetScript("OnEvent",function()
       elseif cmd=="sync" then
         if arg=="off" then AshenBuilds:SetChannelSync(false)
         elseif arg=="on" then AshenBuilds:SetChannelSync(true)
-        else AB_Print("Community sync over the realm channel is "..(AshenBuilds:IsChannelSyncOn() and "on" or "off")..". /ab sync off uses guild and party only.") end
+        elseif arg=="status" then AshenBuilds:PrintSyncStatus()
+        else AB_Print("Community sync over the realm channel is "..(AshenBuilds:IsChannelSyncOn() and "on" or "off")..". /ab sync off uses guild and party only; /ab sync status shows who you can reach.") end
       elseif cmd=="unhide" then
         local hidden=AshenBuilds:HiddenAuthors(); local key=string.lower(arg or "")
         if hidden[key] then local n=hidden[key]; AshenBuilds:HideAuthor(n,false); AB_Print("Showing builds from "..n.." again.")

@@ -55,6 +55,12 @@ local CHUNK = 180              -- payload budget for batched vote messages
 local RESYNC_INTERVAL = 1200   -- re-compare catalogs with the realm every 20 minutes
 local RETRY_INTERVAL = 180     -- ...or every 3 minutes until someone has answered us
 
+local REPEAT_DELAYS = {60, 240} -- a publish or withdrawal is sent again after these many seconds
+-- Longest payload that fits both transports: channel lines are capped at 255
+-- characters including MARK, addon messages at 254 including the prefix and a tab.
+local MAX_WIRE = 255 - string.len(MARK)
+local PEER_WINDOW = 1800       -- /ab sync status lists players heard within 30 minutes
+
 local Enc, Dec = AB.EncodeNumber, AB.DecodeNumber
 local MAX_QUEUE = 300
 
@@ -112,7 +118,10 @@ end
 ---------------------------------------------------------------------------
 -- Scheduling and outgoing queue
 ---------------------------------------------------------------------------
-local timers, queue, sinceSend = {}, {}, SEND_INTERVAL
+-- urgent holds the player's own actions (publish, withdraw, vote) so they go
+-- out ahead of any relay or catch-up traffic already waiting in the queue.
+local timers, queue, urgent, sinceSend = {}, {}, {}, SEND_INTERVAL
+local peers = {}  -- name -> {t, via, version}: who we have heard from this session
 local clock = CreateFrame("Frame")
 
 local function After(delay, key, fn)
@@ -144,6 +153,8 @@ local function ChannelId()
 end
 
 local function Transmit(msg)
+  -- Too long to arrive intact: a cut-off message fails its checksum anyway.
+  if string.len(msg) > MAX_WIRE then return end
   if IsInGuild() then SendAddonMessage(PREFIX, msg, "GUILD") end
   if GetNumRaidMembers() > 0 then SendAddonMessage(PREFIX, msg, "RAID")
   elseif GetNumPartyMembers() > 0 then SendAddonMessage(PREFIX, msg, "PARTY") end
@@ -151,7 +162,10 @@ local function Transmit(msg)
   if id > 0 then SendChatMessage(MARK .. msg, "CHANNEL", nil, id) end
 end
 
-local function Send(msg) if table.getn(queue) < MAX_QUEUE then table.insert(queue, msg) end end
+local function Send(msg, now)
+  local q = now and urgent or queue
+  if table.getn(q) < MAX_QUEUE then table.insert(q, msg) end
+end
 
 clock:SetScript("OnUpdate", function()
   -- Collect due timers first: callbacks may schedule new ones, and adding keys
@@ -160,9 +174,9 @@ clock:SetScript("OnUpdate", function()
   for key, t in pairs(timers) do if now >= t.at then table.insert(due, key) end end
   for i = 1, table.getn(due) do t = timers[due[i]]; timers[due[i]] = nil; if t then pcall(t.fn) end end
   sinceSend = sinceSend + arg1
-  if sinceSend >= SEND_INTERVAL and table.getn(queue) > 0 then
-    sinceSend = 0
-    Transmit(table.remove(queue, 1))
+  if sinceSend >= SEND_INTERVAL then
+    local q = (table.getn(urgent) > 0 and urgent) or (table.getn(queue) > 0 and queue)
+    if q then sinceSend = 0; Transmit(table.remove(q, 1)) end
   end
 end)
 
@@ -281,10 +295,25 @@ function AB:PublishedByAlt(name)
   end
 end
 
-local function AnnounceOwn(name)
+local function AnnounceOwn(name, now)
   local c, me = DB(), Me()
   local e = c.builds[BuildId(me, name)]
-  if e then Send("P~" .. Enc(e.ver) .. "~" .. e.name .. "~" .. e.code .. "~" .. Checksum(e.name, e.code)) end
+  if e then Send("P~" .. Enc(e.ver) .. "~" .. e.name .. "~" .. e.code .. "~" .. Checksum(e.name, e.code), now) end
+end
+
+-- One lost chat message shouldn't lose a publish or withdrawal, so each is
+-- repeated a couple of times. The repeat sends whatever is current by then.
+local function AnnounceWithdrawal(name, now)
+  local c, id = DB(), BuildId(Me(), name)
+  local t = c.tomb[id]
+  if t and not c.builds[id] then Send("U~" .. Enc(t.ver) .. "~" .. name, now) end
+end
+
+local function Repeat(name, fn)
+  local i
+  for i = 1, table.getn(REPEAT_DELAYS) do
+    After(REPEAT_DELAYS[i], "repeat" .. i .. ":" .. name, function() fn(name, true) end)
+  end
 end
 
 function AB:PublishBuild(name)
@@ -306,7 +335,7 @@ function AB:PublishBuild(name)
   local code = self:ExportBuild(saved)
   c.builds[id] = {id = id, author = me, name = name, ver = ver, code = code, confirmed = true, seen = Now(),
     class = saved.class, race = saved.race, level = self:GetBuildLevel(saved), spec = saved.spec, talents = self:GetTalentSplit(saved)}
-  AnnounceOwn(name)
+  AnnounceOwn(name, true); Repeat(name, AnnounceOwn)
   self.Print("Published |cffffffff" .. name .. "|r to community builds.")
   RefreshViews()
 end
@@ -322,7 +351,7 @@ function AB:UnpublishBuild(name)
   local ver = Now(); local e = c.builds[id]
   if e and e.ver >= ver then ver = e.ver + 1 end
   RemoveBuild(id, ver)
-  Send("U~" .. Enc(ver) .. "~" .. name)
+  AnnounceWithdrawal(name, true); Repeat(name, AnnounceWithdrawal)
   self.Print("Withdrew |cffffffff" .. name .. "|r from community builds.")
 end
 
@@ -344,7 +373,7 @@ function AB:ToggleVote(id)
   local old = c.votes[id] and c.votes[id][me]
   local t = Now(); if old and old.t >= t then t = old.t + 1 end
   SetVote(id, me, on, t)
-  Send("V~" .. e.author .. "~" .. e.name .. "~" .. (on and "1" or "0") .. "~" .. Enc(t))
+  Send("V~" .. e.author .. "~" .. e.name .. "~" .. (on and "1" or "0") .. "~" .. Enc(t), true)
   RefreshViews()
 end
 
@@ -421,6 +450,12 @@ local function Relay(requester)
   local list, me, i, e, v, r, chunk, item = AB:GetCommunityBuilds(), Me(), nil, nil, nil, nil, nil, nil
   table.sort(list, function(a, b) if a.votes ~= b.votes then return a.votes > b.votes end return a.seen > b.seen end)
   Send("R~" .. requester .. "~" .. Enc(score))
+  -- Our own builds go out as P every time. This answer makes everyone else
+  -- stand down, so leaving them to AnnounceAllOwn (which has a long cooldown)
+  -- meant the requester often never heard them.
+  for i = 1, table.getn(list) do
+    if list[i].author == me then AnnounceOwn(list[i].name) end
+  end
   local sent = 0
   for i = 1, table.getn(list) do
     e = list[i]
@@ -482,6 +517,7 @@ function AB:HandleCommunityMessage(sender, msg)
     end
     if changed then RefreshViews() end
   elseif kind == "Q" then
+    if f[5] and peers[sender] then peers[sender].version = string.sub(f[5], 1, 12) end
     if f[5] and not updateNoticeShown and Newer(f[5], AB.VERSION) then
       updateNoticeShown = true
       if AB.Print then AB.Print("A newer Ashen Builds (" .. string.sub(f[5], 1, 12) .. ") is available. Update to keep seeing every community build.") end
@@ -575,6 +611,13 @@ local function EnsureChannel()
   After(3, "join", EnsureChannel)
 end
 
+local function Heard(sender, via)
+  if not sender or sender == "" or sender == Me() then return end
+  local p = peers[sender]
+  if not p then p = {}; peers[sender] = p end
+  p.t = GetTime(); p.via = via
+end
+
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -596,10 +639,10 @@ events:SetScript("OnEvent", function()
   elseif event == "CHAT_MSG_ADDON" then
     -- Messages come from other players' clients, so a bad one is dropped silently
     -- instead of raising a Lua error for everyone who receives it.
-    if arg1 == PREFIX then pcall(AB.HandleCommunityMessage, AB, arg4, arg2) end
+    if arg1 == PREFIX then Heard(arg4, string.lower(arg3 or "addon")); pcall(AB.HandleCommunityMessage, AB, arg4, arg2) end
   elseif event == "CHAT_MSG_CHANNEL" then
     if ChannelEnabled() and IsOurChannel(arg9, arg4) and type(arg1) == "string" and string.sub(arg1, 1, string.len(MARK)) == MARK then
-      pcall(AB.HandleCommunityMessage, AB, arg2, string.sub(arg1, string.len(MARK) + 1))
+      Heard(arg2, "channel"); pcall(AB.HandleCommunityMessage, AB, arg2, string.sub(arg1, string.len(MARK) + 1))
     end
   end
 end)
@@ -623,3 +666,42 @@ function AB:SetChannelSync(on)
   end
 end
 function AB:IsChannelSyncOn() return ChannelEnabled() end
+
+-- /ab sync status: what this client can reach and who it has heard from, so a
+-- player whose builds never arrive can be told apart from one who is offline.
+function AB:GetSyncStatus()
+  local c, me, mine, id, e = DB(), Me(), 0, nil, nil
+  for id, e in pairs(c.builds) do if e.author == me then mine = mine + 1 end end
+  local channel
+  if not ChannelEnabled() then channel = "off"
+  elseif ChannelId() > 0 then channel = "joined"
+  elseif joinAttempts > 5 then channel = "failed"
+  else channel = "joining" end
+  local list, now, name, p = {}, GetTime(), nil, nil
+  for name, p in pairs(peers) do
+    if now - p.t <= PEER_WINDOW then table.insert(list, {name = name, via = p.via, version = p.version, ago = now - p.t}) end
+  end
+  table.sort(list, function(a, b) return a.ago < b.ago end)
+  return {channel = channel, channelId = ChannelId(), guild = IsInGuild() and true or false,
+    builds = CountKeys(c.builds), mine = mine, queued = table.getn(queue) + table.getn(urgent),
+    answered = answered, peers = list}
+end
+
+function AB:PrintSyncStatus()
+  local s = self:GetSyncStatus()
+  local channelText = ({joined = "joined (channel " .. s.channelId .. ")", off = "off (/ab sync on to use it)",
+    failed = "could not join. You may already be in 10 chat channels: leave one, then /ab sync on",
+    joining = "joining"})[s.channel]
+  self.Print("Community sync. Realm channel: " .. channelText .. ". Guild: " .. (s.guild and "yes" or "no") .. ".")
+  self.Print("Builds known: " .. s.builds .. " (" .. s.mine .. " published by you). Messages waiting to send: " .. s.queued .. ". Sync request answered: " .. (s.answered and "yes" or "not yet") .. ".")
+  if table.getn(s.peers) == 0 then
+    self.Print("No other Ashen Builds players heard from in the last 30 minutes.")
+  else
+    local parts, i, p = {}, nil, nil
+    for i = 1, table.getn(s.peers) do
+      p = s.peers[i]
+      table.insert(parts, p.name .. " (" .. p.via .. (p.version and (", v" .. p.version) or "") .. ", " .. math.floor(p.ago / 60) .. "m ago)")
+    end
+    self.Print("Heard from: " .. table.concat(parts, ", "))
+  end
+end

@@ -123,6 +123,7 @@ an item (or loading a saved build) takes you back to the Planner.
 | `/ab sim settings` | Open the simulator settings |
 | `/ab sim log` | One fight's combat log from the last run |
 | `/ab sync on` / `off` | Use the hidden realm channel for community builds, or guild and party only |
+| `/ab sync status` | Show whether you are in the realm channel and which Ashen Builds players you have heard from |
 | `/ab unhide <player>` | Show community builds from a player you hid |
 
 ## For developers
