@@ -40,6 +40,22 @@ Set(WORLD_BOSSES, {"Azuregos", "Lord Kazzak", "Emeriss", "Lethon", "Ysondre", "T
 local function HasBit(mask, bit) return math.mod(math.floor(mask / bit), 2) == 1 end
 AB.HasBit = HasBit
 
+-- Level needed to use an item: its required level, or for a quest reward with no
+-- other source, the level of the lowest quest that gives it (whichever is higher).
+local function UseLevel(id, r)
+  local req = r[4] or 0
+  local ss = AshenDB and AshenDB.ItemSources and AshenDB.ItemSources[id]
+  if not ss then return req end
+  local quest, i, s
+  for i = 1, table.getn(ss) do
+    s = ss[i]
+    if s[1] ~= "quest" then return req end
+    if (tonumber(s[7]) or 0) > 0 and (not quest or s[7] < quest) then quest = s[7] end
+  end
+  if quest and quest > req then return quest end
+  return req
+end
+
 local function SourceInfo(id, r)
   local mask, words = 0, {}
   local cats = r[20] or {}
@@ -98,6 +114,7 @@ end
 local function Reset()
   IDX.pos = 0; IDX.done = false; IDX.n = 0
   IDX.id, IDX.name, IDX.q, IDX.req, IDX.ilvl, IDX.hidden, IDX.class, IDX.src, IDX.srcText, IDX.stats = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+  IDX.use, IDX.armor, IDX.wtype, IDX.slot = {}, {}, {}, {}
   IDX.bySlot = {ALL = {}}
   local i; for i = 1, table.getn(AB.SLOTS) do IDX.bySlot[AB.SLOTS[i]] = {} end
 end
@@ -126,6 +143,7 @@ function IDX:Step(budget)
         mask, text = SourceInfo(id, r)
         self.id[n] = id; self.name[n] = string.lower(r[1] or ""); self.q[n] = r[2] or 1; self.req[n] = r[4] or 0; self.ilvl[n] = r[5] or 0
         self.hidden[n] = IsHidden(r[1]); self.class[n] = tonumber(r[11]) or -1; self.src[n] = mask; self.srcText[n] = text; self.stats[n] = r[19] or {}
+        self.use[n] = UseLevel(id, r); self.armor[n] = (r[7] == 4 and r[8]) or 0; self.wtype[n] = (r[7] == 2 and r[18]) or ""; self.slot[n] = r[3]
         for k = 1, table.getn(targets) do table.insert(self.bySlot[targets[k]], n) end
         table.insert(self.bySlot.ALL, n)
       end
@@ -138,12 +156,55 @@ end
 
 function IDX:Finish() return self:Step(nil) end
 
+-- Armor and weapon proficiencies (vanilla). Armor subclasses: 1 cloth, 2 leather,
+-- 3 mail, 4 plate, 6 shield, 7 libram, 8 idol, 9 totem. A number is the level the
+-- class learns it; anything not listed can't be used. Cloth and misc are for everyone.
+local ARMOR_PROF = {
+  [2] = {Warrior = 1, Paladin = 1, Hunter = 1, Rogue = 1, Shaman = 1, Druid = 1},
+  [3] = {Warrior = 1, Paladin = 1, Hunter = 40, Shaman = 40},
+  [4] = {Warrior = 40, Paladin = 40},
+  [6] = {Warrior = 1, Paladin = 1, Shaman = 1},
+  [7] = {Paladin = 1}, [8] = {Druid = 1}, [9] = {Shaman = 1},
+}
+local function Weapons(list) local t, i = {}, nil; for i = 1, table.getn(list) do t[list[i]] = true end; return t end
+local WEAPON_PROF = {
+  Warrior = Weapons({"Sword", "Two-Hand Sword", "Axe", "Two-Hand Axe", "Mace", "Two-Hand Mace", "Dagger", "Fist", "Polearm", "Staff", "Bow", "Gun", "Crossbow", "Thrown"}),
+  Paladin = Weapons({"Sword", "Two-Hand Sword", "Axe", "Two-Hand Axe", "Mace", "Two-Hand Mace", "Polearm"}),
+  Hunter = Weapons({"Sword", "Two-Hand Sword", "Axe", "Two-Hand Axe", "Dagger", "Fist", "Polearm", "Staff", "Bow", "Gun", "Crossbow", "Thrown"}),
+  Rogue = Weapons({"Sword", "Mace", "Dagger", "Fist", "Bow", "Gun", "Crossbow", "Thrown"}),
+  Priest = Weapons({"Mace", "Dagger", "Staff", "Wand"}),
+  Shaman = Weapons({"Axe", "Two-Hand Axe", "Mace", "Two-Hand Mace", "Dagger", "Fist", "Staff"}),
+  Mage = Weapons({"Sword", "Dagger", "Staff", "Wand"}),
+  Warlock = Weapons({"Sword", "Dagger", "Staff", "Wand"}),
+  Druid = Weapons({"Mace", "Two-Hand Mace", "Dagger", "Fist", "Staff"}),
+}
+-- One-hand weapons in the off hand need Dual Wield, learned at these levels.
+local DUAL_WIELD = {Rogue = 10, Warrior = 20, Hunter = 20}
+
+-- Can this class (at this level, or any level when nil) use item p in the given planner slot?
+function IDX:Proficient(p, class, level, slot)
+  local rule = ARMOR_PROF[self.armor[p]]
+  if rule then
+    local at = rule[class]
+    if not at or (level and level < at) then return false end
+  end
+  local w = self.wtype[p]
+  if w ~= "" and WEAPON_PROF[class] and not WEAPON_PROF[class][w] and w ~= "Weapon" and w ~= "Fishing Pole" then return false end
+  if slot == "OFFHAND" and self.slot[p] == "WEAPON" then
+    local at = DUAL_WIELD[class]
+    if not at or (level and level < at) then return false end
+  end
+  return true
+end
+AB.ArmorProficiency, AB.WeaponProficiency = ARMOR_PROF, WEAPON_PROF
+
 local CLASS_BITS = {Warrior = 1, Paladin = 2, Hunter = 4, Rogue = 8, Priest = 16, Shaman = 64, Mage = 128, Warlock = 256, Druid = 1024}
 local STAT_ALIASES = {strength = "str", agility = "agi", stamina = "sta", intellect = "int", spirit = "spi", crit = "crit", hit = "hit",
   healing = "healing", spell = "spellPower", defense = "defense", dodge = "dodge", parry = "parry", block = "block", haste = "haste", armor = "armor"}
 
 -- f = {slot, query, quality (-1 any), minIlvl, maxIlvl, source (bit, 0 any), stats = {{key,min},...},
---      maxReq (nil any), class (nil any), showHidden}. Returns index positions in item-level order.
+--      maxReq (nil any), class (nil any), level (proficiency level, nil any), armor (subclass, nil any),
+--      showHidden}. Returns index positions in item-level order.
 function IDX:Query(f)
   self:Finish()
   local out = {}
@@ -154,7 +215,8 @@ function IDX:Query(f)
   local quality, minI, maxI, src, maxReq = f.quality or -1, f.minIlvl, f.maxIlvl, f.source or 0, f.maxReq
   local statList = f.stats or {}
   local nStats = table.getn(statList)
-  local qs, ilvl, req, hidden, cls, srcm, names, srcText, stats = self.q, self.ilvl, self.req, self.hidden, self.class, self.src, self.name, self.srcText, self.stats
+  local qs, ilvl, req, hidden, cls, srcm, names, srcText, stats = self.q, self.ilvl, self.use, self.hidden, self.class, self.src, self.name, self.srcText, self.stats
+  local armorType, armor, level, slot = f.armor, self.armor, f.level, f.slot
   local i, p, ok, j, st, v, mask
   for i = 1, table.getn(bucket) do
     p = bucket[i]; ok = true
@@ -163,8 +225,10 @@ function IDX:Query(f)
     elseif maxI and ilvl[p] > maxI then ok = false
     elseif maxReq and req[p] > maxReq then ok = false
     elseif not f.showHidden and hidden[p] then ok = false
-    elseif src > 0 and not HasBit(srcm[p], src) then ok = false end
+    elseif src > 0 and not HasBit(srcm[p], src) then ok = false
+    elseif armorType and armor[p] ~= armorType then ok = false end
     if ok and cbit then mask = cls[p]; if mask >= 0 and not HasBit(mask, cbit) then ok = false end end
+    if ok and cbit and not self:Proficient(p, f.class, level, slot) then ok = false end
     if ok and nStats > 0 then
       st = stats[p]
       for j = 1, nStats do v = st[statList[j][1]]; if not v or v <= 0 or v < (statList[j][2] or 0) then ok = false; break end end

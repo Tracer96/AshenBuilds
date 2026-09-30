@@ -103,11 +103,37 @@ local function AB_NewBuild(name)
 end
 AshenBuilds.NewBuildData = AB_NewBuild
 
+-- SavedVariables are shared by every character on the account, so the build open
+-- in the planner is kept per character: logging in on an alt shows that alt's
+-- plan (or a fresh one for its class, race and level), not the last character's.
+local function AB_CharKey() return (UnitName("player") or "?") .. "-" .. (GetRealmName and GetRealmName() or "") end
+
+-- A planner build nobody has worked on yet: it follows the character.
+local function AB_IsUntouched(build)
+  if not build or build.savedName or build.manual then return false end
+  local slot, id, key, rank
+  for slot, id in pairs(build.items or {}) do return false end
+  for key, rank in pairs((build.talents and build.talents.points) or {}) do if (tonumber(rank) or 0) > 0 then return false end end
+  return true
+end
+AshenBuilds.IsUntouchedBuild = AB_IsUntouched
+
 function AshenBuilds:InitializeDB()
   if not AshenBuildsDB then AshenBuildsDB = {} end
   if not AshenBuildsDB.builds then AshenBuildsDB.builds = {} end
-  if not AshenBuildsDB.current then AshenBuildsDB.current = AB_NewBuild("My First Build") end
   if not AshenBuildsDB.settings then AshenBuildsDB.settings = {scale=1, locked=false} end
+  AshenBuildsDB.currentByChar = AshenBuildsDB.currentByChar or {}
+  local key = AB_CharKey()
+  local current = AshenBuildsDB.currentByChar[key]
+  if not current then
+    -- Saves from before per-character planners had one shared build: the first
+    -- character of that class to log in keeps it, everyone else starts fresh.
+    local shared = AshenBuildsDB.current
+    if shared and not AshenBuildsDB.sharedCurrentClaimed and shared.class == AB_PlayerClass() then current = shared; AshenBuildsDB.sharedCurrentClaimed = true
+    else current = AB_NewBuild("New Build") end
+    AshenBuildsDB.currentByChar[key] = current
+  end
+  AshenBuildsDB.current = current
   self.current = AshenBuildsDB.current
   -- Builds from before rename support: link the planner to the saved build with its name.
   if not self.current.savedName and self.current.name and AshenBuildsDB.builds[self.current.name] then self.current.savedName = self.current.name end
@@ -285,15 +311,15 @@ function AshenBuilds:GetSetCounts(build)
 end
 
 function AshenBuilds:SetClass(value)
-  self.current.class = value
+  self.current.class = value; self.current.manual = true
   self.current.spec = self.SPECS[value][1]
   self.current.updated = time(); self:RefreshUI()
 end
-function AshenBuilds:SetRace(value) self.current.race=value; self.current.updated=time(); self:RefreshUI() end
+function AshenBuilds:SetRace(value) self.current.race=value; self.current.manual=true; self.current.updated=time(); self:RefreshUI() end
 function AshenBuilds:SetSpec(value) self.current.spec=value; self.current.updated=time(); self:RefreshUI() end
 function AshenBuilds:SetLevel(value)
   value=AB_ValidLevel(value)
-  self.current.level=value; self.current.updated=time(); self:RefreshUI()
+  self.current.level=value; self.current.manual=true; self.current.updated=time(); self:RefreshUI()
 end
 
 function AshenBuilds:ImportEquipped()
@@ -705,8 +731,26 @@ end
 -- Startup is deliberately registered after every calculation method exists.
 local eventFrame=CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
+eventFrame:RegisterEvent("PLAYER_LOGOUT")
 eventFrame:SetScript("OnEvent",function()
-  if event=="ADDON_LOADED" and arg1=="AshenBuilds" then
+  local AB=AshenBuilds
+  if event=="PLAYER_ENTERING_WORLD" or event=="PLAYER_LEVEL_UP" then
+    -- Unit level isn't reliable while addons load, so an untouched build picks up
+    -- the character's class, race and level once in the world (and on level up).
+    local b=AB.current
+    if b and AB_IsUntouched(b) then
+      local class=AB_PlayerClass()
+      if AB.SPECS[class] and b.class~=class then b.class=class; b.spec=AB.SPECS[class][1] end
+      b.race=AB_PlayerRace()
+      b.level=AB_ValidLevel((event=="PLAYER_LEVEL_UP" and arg1) or UnitLevel("player"))
+      if AB.RefreshUI then AB:RefreshUI() end
+    end
+  elseif event=="PLAYER_LOGOUT" then
+    -- Loading a saved build or starting a new one replaces AshenBuildsDB.current.
+    if AshenBuildsDB and AshenBuildsDB.currentByChar then AshenBuildsDB.currentByChar[AB_CharKey()]=AshenBuildsDB.current end
+  elseif event=="ADDON_LOADED" and arg1=="AshenBuilds" then
     AshenBuilds:InitializeDB(); AshenBuilds:CreateUI(); AshenBuilds:SetupTabs()
     SLASH_ASHENBUILDS1="/ab"; SLASH_ASHENBUILDS2="/ashenbuilds"
     SlashCmdList["ASHENBUILDS"]=function(msg)
