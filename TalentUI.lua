@@ -79,7 +79,10 @@ local function createTreePanel(parent, treeIndex)
   panel:SetPoint("TOPLEFT", parent, "TOPLEFT", 39 + ((treeIndex - 1) * 336), -92)
   panel:SetFrameLevel(parent:GetFrameLevel() + 1)
   AB:StylePanel(panel, "panel")
-  panel:SetBackdropColor(0.02, 0.015, 0.012, 1)
+  -- The backdrop fill draws in the same BACKGROUND layer as the tree art and can
+  -- land on top of it (the trees showed plain black), so the panel keeps only its
+  -- border and the art, darkened by the tint below, is the fill.
+  panel:SetBackdropColor(0, 0, 0, 0)
 
   panel.art = {}
   local i
